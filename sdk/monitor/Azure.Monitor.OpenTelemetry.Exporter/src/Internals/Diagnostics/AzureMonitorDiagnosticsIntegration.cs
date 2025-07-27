@@ -423,7 +423,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             return new StringContent(json, System.Text.Encoding.UTF8, "application/json");
         }
 
-        private static (string IngestionEndpoint) ParseConnectionString(string connectionString)
+        private static string  ParseConnectionString(string connectionString)
         {
             // Simplified parsing - actual implementation would be more robust
             return ("https://dc.services.visualstudio.com/v2/track");
