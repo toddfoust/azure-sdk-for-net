@@ -179,7 +179,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 Directory.CreateDirectory(logDirectory);
 
                 // Parse optional LogLevel (default to Info for Three Pillars)
-                if (configContent.Contains("\"LogLevel\"", StringComparison.OrdinalIgnoreCase))
+
+                if (configContent.IndexOf("LogLevel", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     var logLevelRegex = new Regex(@"""LogLevel""\s*:\s*""(?<LogLevel>.*?)""",
                         RegexOptions.IgnoreCase);
@@ -196,7 +197,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 }
 
                 // Parse optional FileSizeMB
-                if (configContent.Contains("\"FileSizeMB\"", StringComparison.OrdinalIgnoreCase))
+                if (configContent.IndexOf("FileSizeMB", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     var fileSizeRegex = new Regex(@"""FileSizeMB""\s*:\s*(?<FileSizeMB>\d+)",
                         RegexOptions.IgnoreCase);
@@ -223,7 +224,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             DisableAllEventSources();
 
             // Re-enable with new level
-            foreach (var eventSource in GetEventSources())
+            foreach (var eventSource in EventSource.GetSources())
             {
                 if (eventSource.Name != null)
                 {
@@ -242,7 +243,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private void DisableAllEventSources()
         {
-            foreach (var eventSource in GetEventSources())
+            foreach (var eventSource in EventSource.GetSources())
             {
                 DisableEvents(eventSource);
             }

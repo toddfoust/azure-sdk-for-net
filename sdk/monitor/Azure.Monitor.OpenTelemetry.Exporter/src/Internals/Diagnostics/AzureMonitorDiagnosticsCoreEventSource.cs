@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Diagnostics.Tracing;
 using System.Runtime.CompilerServices;
 
@@ -500,7 +501,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 return "OTEL_DIAGNOSTICS";
             if (configPath.Contains("appsettings"))
                 return "AppSettings";
-            if (configPath.Contains("environment", StringComparison.OrdinalIgnoreCase))
+            if (configPath.IndexOf("environment", StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Environment";
 
             return "File";
