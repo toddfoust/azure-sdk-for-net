@@ -67,7 +67,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 EnableEvents(eventSource, _currentLogLevel);
             }
 
-            // Also listen to core OpenTelemetry events when DEBUG/TRACE is enabled
+            // Also listen to core OpenTelemetry events when DEBUG/TRACE/VERBOSE is enabled
             if (_currentLogLevel <= EventLevel.Verbose &&
                 eventSource.Name != null &&
                 eventSource.Name.StartsWith("OpenTelemetry", StringComparison.OrdinalIgnoreCase))

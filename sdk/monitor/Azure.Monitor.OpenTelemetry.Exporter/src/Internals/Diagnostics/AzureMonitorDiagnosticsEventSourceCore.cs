@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using System;
-using System.IO;
+using System.Diagnostics;
 using System.Diagnostics.Tracing;
+using System.IO;
 using System.Runtime.CompilerServices;
+using Azure.Core;
 
 namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 {
@@ -17,10 +19,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     {
         internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Core";
 
-        internal static readonly AzureMonitorDiagnosticsEventSourceCore Log = new AzureMonitorDiagnosticsEventSourceCore();
-#if DEBUG
-        //internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
-#endif
+        internal static readonly AzureMonitorDiagnosticsEventSourceCore Log = new();
         private AzureMonitorDiagnosticsEventSourceCore() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
                 AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
@@ -32,11 +31,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when the Azure Monitor agent starts up and reports environment information.
         /// </summary>
         [Event(1, Level = EventLevel.Informational, Message = "Azure Monitor agent starting up. Version: {agentVersion}, Process: {processName} ({processId}), OS: {osVersion}")]
-        public void AgentStartup(string agentVersion, string processName, int processId, string osVersion)
+        public void AgentStartup(string agentVersion)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(1, agentVersion, processName, processId, osVersion);
+                WriteEvent(1, agentVersion);
             }
         }
 
@@ -44,12 +43,12 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs comprehensive environment report during agent startup.
         /// </summary>
         [Event(2, Level = EventLevel.Informational, Message = "Agent environment report generated")]
-        public void AgentEnvironmentReport(string machineName, string workingDirectory, string agentDirectory,
-            string instrumentationKey, string connectionString, string cloudRole, string cloudRoleInstance)
+        public void AgentEnvironmentReport(string osVersion, string machineName, int processId, string processName, string workingDirectory,
+             string agentDirectory, string instrumentationKey, string connectionString, string cloudRole, string cloudRoleInstance)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(2, machineName, workingDirectory, agentDirectory, instrumentationKey, connectionString, cloudRole, cloudRoleInstance);
+                WriteEvent(2, osVersion, machineName, processId, processName, workingDirectory, agentDirectory, instrumentationKey, connectionString, cloudRole, cloudRoleInstance);
             }
         }
 
@@ -114,6 +113,18 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
                 WriteEvent(13, endpoint, authType, instrumentationKey);
+            }
+        }
+
+        /// <summary>
+        /// Logs when self-diagnostics OTEL_DIAGNOSTICS.json config file is missing. TODO: Fallback to Profile API instead
+        /// </summary>
+        [Event(14, Level = EventLevel.Informational, Message = "Self-diagnostics config file not found. Config File: {configPath}. Self-diagnostics logging is disabled.")]
+        public void ConfigFileMissing(string configPath)
+        {
+            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            {
+                WriteEvent(14, configPath);
             }
         }
 
@@ -379,11 +390,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             try
             {
                 var agentVersion = GetAgentVersion();
-                var processName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
-                var processId = System.Diagnostics.Process.GetCurrentProcess().Id;
-                var osVersion = Environment.OSVersion.ToString();
 
-                AgentStartup(agentVersion, processName, processId, osVersion);
+                AgentStartup(agentVersion);
 
                 // Log comprehensive environment report
                 var machineName = Environment.MachineName;
@@ -396,7 +404,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var cloudRole = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") ?? "Unknown";
                 var cloudRoleInstance = Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID") ?? machineName;
 
-                AgentEnvironmentReport(machineName, workingDirectory, agentDirectory,
+                var processName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
+                var processId = System.Diagnostics.Process.GetCurrentProcess().Id;
+                var osVersion = Environment.OSVersion.ToString();
+
+                AgentEnvironmentReport(osVersion, machineName, processId, processName, workingDirectory, agentDirectory,
                     instrumentationKey, connectionString, cloudRole, cloudRoleInstance);
             }
             catch (Exception ex)
@@ -453,6 +465,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
                 // Log individual DNS resolutions
                 DnsResolved(ExtractHostname(ingestionEndpoint), resolvedIPsString);
+                DnsResolved(ExtractHostname(liveMetricsEndpoint), resolvedIPsString);
+                DnsResolved(ExtractHostname(profilerEndpoint), resolvedIPsString);
             }
             catch (Exception ex)
             {

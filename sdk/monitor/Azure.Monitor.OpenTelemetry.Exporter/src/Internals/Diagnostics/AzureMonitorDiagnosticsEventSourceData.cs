@@ -20,10 +20,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     {
         internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Data";
 
-        internal static readonly AzureMonitorDiagnosticsEventSourceData Log = new AzureMonitorDiagnosticsEventSourceData();
-#if DEBUG
-        //internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
-#endif
+        internal static readonly AzureMonitorDiagnosticsEventSourceData Log = new();
+
         private AzureMonitorDiagnosticsEventSourceData() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
             AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
