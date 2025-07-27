@@ -90,6 +90,15 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             if (_disposed || !_loggingEnabled || _currentLogDirectory == null)
                 return;
 
+            // Filter: Only process events from OpenTelemetry-* or your custom sources
+            var sourceName = eventData.EventSource.Name;
+            if (!sourceName.StartsWith("OpenTelemetry-") &&
+                !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-") &&
+                !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Exporter"))
+            {
+                return;
+            }
+
             try
             {
                 var logEntry = CreateLogEntry(eventData);
