@@ -13,16 +13,17 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     /// configuration loading, and environment reporting.
     /// </summary>
     [EventSource(Name = EventSourceName)]
-    internal sealed class AzureMonitorDiagnosticsCoreEventSource : EventSource
+    internal sealed class AzureMonitorDiagnosticsEventSourceCore : EventSource
     {
         internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Core";
 
-        internal static readonly AzureMonitorDiagnosticsCoreEventSource Log = new AzureMonitorDiagnosticsCoreEventSource();
+        internal static readonly AzureMonitorDiagnosticsEventSourceCore Log = new AzureMonitorDiagnosticsEventSourceCore();
 #if DEBUG
-        internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
+        //internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
 #endif
-        private AzureMonitorDiagnosticsCoreEventSource() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
+        private AzureMonitorDiagnosticsEventSourceCore() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
+                AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
         }
 
         #region Agent Lifecycle Events
@@ -489,7 +490,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         {
             try
             {
-                var assembly = typeof(AzureMonitorDiagnosticsCoreEventSource).Assembly;
+                var assembly = typeof(AzureMonitorDiagnosticsEventSourceCore).Assembly;
                 return assembly.GetName().Version?.ToString() ?? "Unknown";
             }
             catch

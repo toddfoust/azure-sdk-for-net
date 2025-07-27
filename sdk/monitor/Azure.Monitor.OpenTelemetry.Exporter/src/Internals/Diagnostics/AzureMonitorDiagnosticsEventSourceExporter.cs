@@ -16,16 +16,17 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     /// Answers the questions: Where was telemetry sent? and What was the backend response?
     /// </summary>
     [EventSource(Name = EventSourceName)]
-    internal sealed class AzureMonitorDiagnosticsExporterEventSource : EventSource
+    internal sealed class AzureMonitorDiagnosticsEventSourceExporter : EventSource
     {
         internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Exporter";
 
-        internal static readonly AzureMonitorDiagnosticsExporterEventSource Log = new AzureMonitorDiagnosticsExporterEventSource();
+        internal static readonly AzureMonitorDiagnosticsEventSourceExporter Log = new AzureMonitorDiagnosticsEventSourceExporter();
 #if DEBUG
-        internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
+        //internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
 #endif
-        private AzureMonitorDiagnosticsExporterEventSource() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
+        private AzureMonitorDiagnosticsEventSourceExporter() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
+            AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
         }
 
         #region Pillar 2: Transmission Attempt Events

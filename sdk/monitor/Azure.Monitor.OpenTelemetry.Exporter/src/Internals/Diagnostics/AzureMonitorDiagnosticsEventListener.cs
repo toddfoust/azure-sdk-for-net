@@ -48,6 +48,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         private static readonly string _processName = Process.GetCurrentProcess().ProcessName;
         private static readonly int _processId = Process.GetCurrentProcess().Id;
 
+        private static volatile bool _loggingEnabled = false;
+
         public AzureMonitorDiagnosticsEventListener()
         {
             _logQueue = new ConcurrentQueue<DiagnosticLogEntry>();
@@ -76,7 +78,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
         {
-            if (_disposed || _currentLogDirectory == null)
+            if (_disposed || !_loggingEnabled || _currentLogDirectory == null)
                 return;
 
             try
@@ -94,6 +96,22 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        public void EnableLogging()
+        {
+            _loggingEnabled = true;
+        }
+
+        public void DisableLogging()
+        {
+            // Stop writing logs and disable all event sources
+            _loggingEnabled = false;
+            _currentLogDirectory = null;
+            _currentLogFile = null;
+            _currentFileSize = 0;
+            _currentFileIndex = 0;
+            DisableAllEventSources();
+        }
+
         private void CheckConfiguration(object? state)
         {
             if (_disposed)
@@ -107,6 +125,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     // Config file not found, disable logging
                     if (_currentLogDirectory != null)
                     {
+                        _loggingEnabled = false;
                         _currentLogDirectory = null;
                         _currentLogFile = null;
                         DisableAllEventSources();
@@ -121,14 +140,26 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                                       _currentLogLevel != logLevel ||
                                       _currentFileSizeMB != fileSizeMB;
 
-                    if (configChanged)
+                    if (configChanged || !_loggingEnabled)
                     {
                         _currentLogDirectory = logDirectory;
                         _currentLogLevel = logLevel;
                         _currentFileSizeMB = fileSizeMB;
+                        _loggingEnabled = true;
 
                         UpdateEventSourceListening();
                         CreateNewLogFile();
+                    }
+                }
+                else
+                {
+                    if (_loggingEnabled)
+                    {
+                        // If parsing failed, disable logging
+                        _loggingEnabled = false;
+                        _currentLogDirectory = null;
+                        _currentLogFile = null;
+                        DisableAllEventSources();
                     }
                 }
             }
@@ -365,7 +396,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private void ProcessLogQueue()
         {
-            if (_disposed || _currentLogFile == null)
+            if (_disposed || !_loggingEnabled || _currentLogFile == null)
                 return;
 
             var entriesToProcess = new List<DiagnosticLogEntry>();
