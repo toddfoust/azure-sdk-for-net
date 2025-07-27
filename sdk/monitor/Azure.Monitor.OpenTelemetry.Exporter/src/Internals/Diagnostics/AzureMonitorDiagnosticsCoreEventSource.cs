@@ -8,11 +8,15 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     /// EventSource for Azure Monitor core diagnostic events including agent lifecycle,
     /// configuration loading, and environment reporting.
     /// </summary>
-    [EventSource(Name = "OpenTelemetry-AzureMonitor-Diagnostics-Core")]
+    [EventSource(Name = EventSourceName)]
     internal sealed class AzureMonitorDiagnosticsCoreEventSource : EventSource
     {
-        public static readonly AzureMonitorDiagnosticsCoreEventSource Shared = new();
+        internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Core";
 
+        internal static readonly AzureMonitorDiagnosticsCoreEventSource Log = new AzureMonitorDiagnosticsCoreEventSource();
+#if DEBUG
+        internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
+#endif
         private AzureMonitorDiagnosticsCoreEventSource() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
         }

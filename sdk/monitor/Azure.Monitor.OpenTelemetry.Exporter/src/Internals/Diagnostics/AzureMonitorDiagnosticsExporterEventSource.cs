@@ -12,11 +12,15 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     /// EventSource for Azure Monitor exporter diagnostic events (Pillars 2 & 3).
     /// Answers the questions: "Where was telemetry sent?" and "What was the backend response?"
     /// </summary>
-    [EventSource(Name = "OpenTelemetry-AzureMonitor-Diagnostics-Exporter")]
+    [EventSource(Name = EventSourceName)]
     internal sealed class AzureMonitorDiagnosticsExporterEventSource : EventSource
     {
-        public static readonly AzureMonitorDiagnosticsExporterEventSource Shared = new();
+        internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Exporter";
 
+        internal static readonly AzureMonitorDiagnosticsExporterEventSource Log = new AzureMonitorDiagnosticsExporterEventSource();
+#if DEBUG
+        internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
+#endif
         private AzureMonitorDiagnosticsExporterEventSource() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
         }

@@ -12,11 +12,16 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     /// EventSource for Azure Monitor telemetry production diagnostic events (Pillar 1).
     /// Answers the question: "What telemetry did your application produce in memory?"
     /// </summary>
-    [EventSource(Name = "OpenTelemetry-AzureMonitor-Diagnostics-Data")]
+    [EventSource(Name = EventSourceName)]
     internal sealed class AzureMonitorDiagnosticsDataEventSource : EventSource
     {
-        public static readonly AzureMonitorDiagnosticsDataEventSource Shared = new();
 
+        internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Data";
+
+        internal static readonly AzureMonitorDiagnosticsDataEventSource Log = new AzureMonitorDiagnosticsDataEventSource();
+#if DEBUG
+        internal static readonly AzureMonitorDiagnosticsEventListener Listener = new AzureMonitorDiagnosticsEventListener();
+#endif
         private AzureMonitorDiagnosticsDataEventSource() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
         }
