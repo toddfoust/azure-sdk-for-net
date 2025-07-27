@@ -7,7 +7,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     {
         private static AzureMonitorDiagnosticsEventListener? _listener;
 
-        public static void EnsureInitialized()
+        public static void Initialize()
         {
             if (_listener == null)
             {

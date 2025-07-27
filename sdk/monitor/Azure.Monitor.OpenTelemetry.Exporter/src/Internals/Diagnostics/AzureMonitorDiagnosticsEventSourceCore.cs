@@ -22,7 +22,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         internal static readonly AzureMonitorDiagnosticsEventSourceCore Log = new();
         private AzureMonitorDiagnosticsEventSourceCore() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
-                AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
+                AzureMonitorDiagnosticsEventListenerManager.Initialize();
         }
 
         #region Agent Lifecycle Events
@@ -382,7 +382,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Helper method to log agent startup with environment details.
         /// </summary>
         [NonEvent]
-        public void LogAgentStartupWithEnvironment()
+        public void EmitAgentStartupAndEnvironmentReport()
         {
             if (!IsEnabled(EventLevel.Informational, EventKeywords.None))
                 return;
@@ -421,7 +421,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Helper method to log configuration loading with validation.
         /// </summary>
         [NonEvent]
-        public void LogConfigurationLoading(string configPath, bool success, string? errorMessage = null)
+        public void EmitConfigurationLoading(string configPath, bool success, string? errorMessage = null)
         {
             if (!IsEnabled(EventLevel.Informational, EventKeywords.None))
                 return;
@@ -448,7 +448,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Helper method to log connection endpoint resolution.
         /// </summary>
         [NonEvent]
-        public void LogConnectionEndpointResolution(string ingestionEndpoint,
+        public void EmitConnectionEndpointResolution(string ingestionEndpoint,
             string[] resolvedIPs)
         {
             if (!IsEnabled(EventLevel.Informational, EventKeywords.None))

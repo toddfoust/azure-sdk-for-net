@@ -24,7 +24,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private AzureMonitorDiagnosticsEventSourceData() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
-            AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
+            AzureMonitorDiagnosticsEventListenerManager.Initialize();
         }
 
         #region Telemetry Production Events (Pillar 1)

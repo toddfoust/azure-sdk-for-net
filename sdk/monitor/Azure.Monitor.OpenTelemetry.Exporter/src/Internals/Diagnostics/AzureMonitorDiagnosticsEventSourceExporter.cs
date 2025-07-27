@@ -24,7 +24,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private AzureMonitorDiagnosticsEventSourceExporter() : base(EventSourceSettings.EtwSelfDescribingEventFormat)
         {
-            AzureMonitorDiagnosticsEventListenerManager.EnsureInitialized();
+            AzureMonitorDiagnosticsEventListenerManager.Initialize();
         }
 
         #region Pillar 2: Transmission Attempt Events
