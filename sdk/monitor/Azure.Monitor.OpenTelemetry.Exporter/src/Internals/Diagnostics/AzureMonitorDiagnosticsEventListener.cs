@@ -434,7 +434,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             if (_disposed)
                 return;
