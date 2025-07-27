@@ -18,9 +18,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 {
     /// <summary>
     /// EventListener implementation that monitors Azure Monitor diagnostic events
-    /// and writes structured JSON logs according to the ADF specification.
+    /// and writes structured JSON logs according to the Agent Diagnostics Framework specification.
     /// </summary>
-    internal sealed class AzureMonitorDiagnosticsEventListener : EventListener, IDisposable
+    public sealed class AzureMonitorDiagnosticsEventListener : EventListener, IDisposable
     {
         private const string ConfigFileName = "OTEL_DIAGNOSTICS.json";
         private const int ConfigCheckIntervalMs = 10000; // 10 seconds
@@ -50,6 +50,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private static volatile bool _loggingEnabled = false;
 
+        /// <summary>
+        /// Initializes a new instance of the diagnostics event listener and starts polling for configuration.
+        /// </summary>
         public AzureMonitorDiagnosticsEventListener()
         {
             _logQueue = new ConcurrentQueue<DiagnosticLogEntry>();
@@ -58,6 +61,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             _configTimer = new Timer(CheckConfiguration, null, 0, ConfigCheckIntervalMs);
         }
 
+        /// <summary>
+        /// Determines which even sources will get enabled and written to the custom structured json log file.
+        /// </summary>
         protected override void OnEventSourceCreated(EventSource eventSource)
         {
             // Listen to Azure Monitor diagnostic EventSources
@@ -76,6 +82,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        /// <summary>
+        /// Responsds to any events from our custom event sources or other OpenTelemetry-* event sources
+        /// </summary>
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
         {
             if (_disposed || !_loggingEnabled || _currentLogDirectory == null)
@@ -96,11 +105,17 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        /// <summary>
+        /// Enables logging and allows events to be written to the diagnostics log file.
+        /// </summary>
         public void EnableLogging()
         {
             _loggingEnabled = true;
         }
 
+        /// <summary>
+        /// Disables logging and stops writing events to the diagnostics log file.
+        /// </summary>
         public void DisableLogging()
         {
             // Stop writing logs and disable all event sources
@@ -469,6 +484,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        /// <summary>
+        /// Disposes the diagnostics listener and flushes any remaining log entries.
+        /// </summary>
         public override void Dispose()
         {
             if (_disposed)

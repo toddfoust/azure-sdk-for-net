@@ -1,11 +1,13 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System.Net.NetworkInformation;
 using System.Reflection;
 using Azure.Monitor.OpenTelemetry.AspNetCore.Internals.AzureSdkCompat;
 using Azure.Monitor.OpenTelemetry.AspNetCore.Internals.Profiling;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Platform;
+using Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -88,6 +90,9 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore
                 .AddDetector(new AzureVMResourceDetector());
 
             builder.ConfigureResource(configureResource);
+
+            // Initialize custom self-diagnostics listener
+            AzureMonitorDiagnosticsEventListenerManager.Initialize();
 
             builder.WithTracing(b => b
                             .AddSource("Azure.*")
