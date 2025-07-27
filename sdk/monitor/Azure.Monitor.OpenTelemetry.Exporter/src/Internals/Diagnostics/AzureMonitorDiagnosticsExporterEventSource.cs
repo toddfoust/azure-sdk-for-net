@@ -9,8 +9,8 @@ using System.Text.Json;
 namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 {
     /// <summary>
-    /// EventSource for Azure Monitor exporter diagnostic events (Pillars 2 & 3).
-    /// Answers the questions: "Where was telemetry sent?" and "What was the backend response?"
+    /// EventSource for Azure Monitor exporter diagnostic events (Pillars 2 + 3).
+    /// Answers the questions: Where was telemetry sent? and What was the backend response?
     /// </summary>
     [EventSource(Name = EventSourceName)]
     internal sealed class AzureMonitorDiagnosticsExporterEventSource : EventSource
