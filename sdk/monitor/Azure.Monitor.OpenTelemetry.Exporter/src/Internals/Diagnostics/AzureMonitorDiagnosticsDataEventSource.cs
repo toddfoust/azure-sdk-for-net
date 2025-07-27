@@ -18,7 +18,6 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     [EventSource(Name = EventSourceName)]
     internal sealed class AzureMonitorDiagnosticsDataEventSource : EventSource
     {
-
         internal const string EventSourceName = "OpenTelemetry-AzureMonitor-Diagnostics-Data";
 
         internal static readonly AzureMonitorDiagnosticsDataEventSource Log = new AzureMonitorDiagnosticsDataEventSource();

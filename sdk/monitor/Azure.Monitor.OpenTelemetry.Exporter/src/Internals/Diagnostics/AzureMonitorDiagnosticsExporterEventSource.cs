@@ -514,7 +514,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                         {
                             var message = messageElement.GetString();
                             if (!string.IsNullOrEmpty(message))
+                            {
                                 reasons.Add(message);
+                            }
                         }
                     }
 
