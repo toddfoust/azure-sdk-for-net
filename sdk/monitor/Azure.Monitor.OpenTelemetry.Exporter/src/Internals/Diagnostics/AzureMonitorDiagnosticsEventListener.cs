@@ -92,9 +92,10 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             // Filter: Only process events from OpenTelemetry-* or your custom sources
             var sourceName = eventData.EventSource.Name;
-            if (!sourceName.StartsWith("OpenTelemetry-") &&
-                !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-") &&
-                !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Exporter"))
+            //if (!sourceName.StartsWith("OpenTelemetry-") &&
+            //    !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-") &&
+            //    !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Exporter"))
+            if (!sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-"))
             {
                 return;
             }
@@ -173,6 +174,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
                         UpdateEventSourceListening();
                         CreateNewLogFile();
+
+                        // We are starting ADF enhanced self-diagnostics logging from reading the OTEL_DIAGNOSTICS.json file
+                        // Output key details for customers during enablement
+                        AzureMonitorDiagnosticsEventSourceCore.Log.EmitConfigurationLoading("OTEL_DIAGNOSTICS.json", true);
+                        AzureMonitorDiagnosticsEventSourceCore.Log.EmitAgentStartupAndEnvironmentReport();
                     }
                 }
                 else
