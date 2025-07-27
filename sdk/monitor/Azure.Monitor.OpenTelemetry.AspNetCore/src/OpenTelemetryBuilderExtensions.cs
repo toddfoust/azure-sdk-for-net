@@ -92,6 +92,7 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore
             builder.ConfigureResource(configureResource);
 
             // Initialize custom self-diagnostics listener
+            // Had to add a project reference to Azure.Monitor.OpenTelemetry.Exporter for this hook to work
             AzureMonitorDiagnosticsEventListenerManager.Initialize();
 
             builder.WithTracing(b => b

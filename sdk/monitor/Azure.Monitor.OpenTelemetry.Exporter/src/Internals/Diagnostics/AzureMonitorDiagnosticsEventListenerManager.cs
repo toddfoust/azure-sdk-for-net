@@ -3,14 +3,12 @@
 
 namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 {
-
     /// <summary>
     /// Manages the lifecycle of the Azure Monitor self-diagnostics event listener.
     /// </summary>
     public static class AzureMonitorDiagnosticsEventListenerManager
     {
         private static AzureMonitorDiagnosticsEventListener? _listener;
-
 
         /// <summary>
         /// Initializes the diagnostics event listener if not already started.
