@@ -24,7 +24,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         [JsonPropertyOrder(4)]
         public string EventName { get; set; } = string.Empty;
 
-        [JsonPropertyOrder(5]
+        [JsonPropertyOrder(5)]
         public string? TraceId { get; set; }
 
         [JsonPropertyOrder(6)]
