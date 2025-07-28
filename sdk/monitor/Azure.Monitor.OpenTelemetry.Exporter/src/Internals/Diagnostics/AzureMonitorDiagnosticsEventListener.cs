@@ -28,21 +28,20 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         private const int DefaultFileSizeMB = 10;
         private const int MaxFileSizeMB = 128;
 
-        private static readonly Regex LogDirectoryRegex = new(
-            @"""LogDirectory""\s*:\s*""(?<LogDirectory>.*?)""",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         private readonly Timer _configTimer;
+        private readonly Timer _logLevelDurationTimer;
         private readonly ConcurrentQueue<DiagnosticLogEntry> _logQueue;
         private readonly object _fileLock = new();
         private volatile bool _disposed;
+        private volatile bool _startupSequenceCompleted = false;
 
         private string? _currentLogDirectory;
         private string? _currentLogFile;
-        private EventLevel _currentLogLevel = EventLevel.Informational;
-        private int _currentFileSizeMB = DefaultFileSizeMB;
+        private SelfDiagnosticsConfig _currentConfig = new SelfDiagnosticsConfig();
+        private Dictionary<string, EventLevel> _eventSourceLevels = new Dictionary<string, EventLevel>();
         private int _currentFileIndex = 0;
         private long _currentFileSize = 0;
+        private DateTime _logLevelStartTime = DateTime.MinValue;
 
         private static readonly string _machineName = Environment.MachineName;
         private static readonly string _processName = Process.GetCurrentProcess().ProcessName;
@@ -59,46 +58,54 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             // Start polling for configuration changes
             _configTimer = new Timer(CheckConfiguration, null, 0, ConfigCheckIntervalMs);
+
+            // Timer for log level duration management
+            _logLevelDurationTimer = new Timer(CheckLogLevelDuration, null, Timeout.Infinite, Timeout.Infinite);
         }
 
         /// <summary>
-        /// Determines which even sources will get enabled and written to the custom structured json log file.
+        /// Determines which event sources will get enabled and written to the custom structured json log file.
         /// </summary>
         protected override void OnEventSourceCreated(EventSource eventSource)
         {
-            // Listen to Azure Monitor diagnostic EventSources
-            if (eventSource.Name != null &&
-                eventSource.Name.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics", StringComparison.OrdinalIgnoreCase))
+            if (!_loggingEnabled || eventSource.Name == null)
+                return;
+
+            var sourceName = eventSource.Name;
+
+            // Always listen to Azure Monitor diagnostic EventSources
+            if (sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics", StringComparison.OrdinalIgnoreCase))
             {
-                EnableEvents(eventSource, _currentLogLevel);
+                var level = GetEventSourceLevel(sourceName);
+                EnableEvents(eventSource, level);
+                return;
             }
 
-            // Also listen to core OpenTelemetry events when DEBUG/TRACE/VERBOSE is enabled
-            if (_currentLogLevel <= EventLevel.Verbose &&
-                eventSource.Name != null &&
-                eventSource.Name.StartsWith("OpenTelemetry", StringComparison.OrdinalIgnoreCase))
+            // Listen to other OpenTelemetry events if IncludeOtelSdkLogs is enabled
+            if (_currentConfig.IncludeOtelSdkLogs &&
+                sourceName.StartsWith("OpenTelemetry", StringComparison.OrdinalIgnoreCase))
             {
-                EnableEvents(eventSource, _currentLogLevel);
+                var level = GetEventSourceLevel(sourceName);
+                EnableEvents(eventSource, level);
+                return;
             }
         }
 
         /// <summary>
-        /// Responsds to any events from our custom event sources or other OpenTelemetry-* event sources
+        /// Responds to any events from our monitored event sources
         /// </summary>
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
         {
             if (_disposed || !_loggingEnabled || _currentLogDirectory == null)
                 return;
 
-            // Filter: Only process events from OpenTelemetry-* or your custom sources
             var sourceName = eventData.EventSource.Name;
-            //if (!sourceName.StartsWith("OpenTelemetry-") &&
-            //    !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-") &&
-            //    !sourceName.StartsWith("OpenTelemetry-AzureMonitor-Exporter"))
-            if (!sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics-"))
-            {
+            if (sourceName == null)
                 return;
-            }
+
+            // Filter events based on configuration
+            if (!ShouldProcessEvent(sourceName))
+                return;
 
             try
             {
@@ -115,26 +122,28 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-        /// <summary>
-        /// Enables logging and allows events to be written to the diagnostics log file.
-        /// </summary>
-        public void EnableLogging()
+        private bool ShouldProcessEvent(string sourceName)
         {
-            _loggingEnabled = true;
+            // Always process Azure Monitor diagnostic events
+            if (sourceName.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Process other OpenTelemetry events only if explicitly enabled
+            if (_currentConfig.IncludeOtelSdkLogs &&
+                sourceName.StartsWith("OpenTelemetry", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
         }
 
-        /// <summary>
-        /// Disables logging and stops writing events to the diagnostics log file.
-        /// </summary>
-        public void DisableLogging()
+        private EventLevel GetEventSourceLevel(string sourceName)
         {
-            // Stop writing logs and disable all event sources
-            _loggingEnabled = false;
-            _currentLogDirectory = null;
-            _currentLogFile = null;
-            _currentFileSize = 0;
-            _currentFileIndex = 0;
-            DisableAllEventSources();
+            // Check if there's a specific filter for this event source
+            if (_eventSourceLevels.TryGetValue(sourceName, out var specificLevel))
+                return specificLevel;
+
+            // Use the default log level
+            return _currentConfig.LogLevel;
         }
 
         private void CheckConfiguration(object? state)
@@ -147,56 +156,119 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var configPath = FindConfigFile();
                 if (configPath == null)
                 {
-                    // Config file not found, disable logging
+                    // Config file not found, try Profile API (Phase 2 - stub for now)
                     if (_currentLogDirectory != null)
                     {
-                        _loggingEnabled = false;
-                        _currentLogDirectory = null;
-                        _currentLogFile = null;
-                        DisableAllEventSources();
+                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigFileMissing(Path.Combine(Directory.GetCurrentDirectory(), ConfigFileName));
+                        // TODO: Attempt Profile API call here in Phase 2
+                        DisableLogging();
                     }
                     return;
                 }
 
                 var configContent = File.ReadAllText(configPath);
-                if (TryParseConfiguration(configContent, out var logDirectory, out var logLevel, out var fileSizeMB))
+                if (TryParseConfiguration(configContent, configPath, out var newConfig))
                 {
-                    var configChanged = _currentLogDirectory != logDirectory ||
-                                      _currentLogLevel != logLevel ||
-                                      _currentFileSizeMB != fileSizeMB;
+                    var configChanged = HasConfigurationChanged(newConfig);
 
                     if (configChanged || !_loggingEnabled)
                     {
-                        _currentLogDirectory = logDirectory;
-                        _currentLogLevel = logLevel;
-                        _currentFileSizeMB = fileSizeMB;
+                        _currentConfig = newConfig;
                         _loggingEnabled = true;
 
-                        UpdateEventSourceListening();
+                        UpdateEventSourceConfiguration();
                         CreateNewLogFile();
 
-                        // We are starting ADF enhanced self-diagnostics logging from reading the OTEL_DIAGNOSTICS.json file
-                        // Output key details for customers during enablement
-                        AzureMonitorDiagnosticsEventSourceCore.Log.EmitConfigurationLoading("OTEL_DIAGNOSTICS.json", true);
-                        AzureMonitorDiagnosticsEventSourceCore.Log.EmitAgentStartupAndEnvironmentReport();
+                        // Setup log level duration timer if specified
+                        if (_currentConfig.LogLevelDurationSeconds > 0)
+                        {
+                            _logLevelStartTime = DateTime.UtcNow;
+                            _logLevelDurationTimer.Change(_currentConfig.LogLevelDurationSeconds * 1000, Timeout.Infinite);
+                        }
+
+                        if (!_startupSequenceCompleted)
+                        {
+                            // Run the startup sequence only once
+                            _startupSequenceCompleted = true;
+                            RunStartupSequence();
+                        }
                     }
                 }
                 else
                 {
                     if (_loggingEnabled)
                     {
-                        // If parsing failed, disable logging
-                        _loggingEnabled = false;
-                        _currentLogDirectory = null;
-                        _currentLogFile = null;
-                        DisableAllEventSources();
+                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationLoadFailed(configPath, "Configuration parsing failed");
+                        DisableLogging();
                     }
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Configuration check error: {ex}");
+                if (_loggingEnabled)
+                {
+                    AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                }
             }
+        }
+
+        private void CheckLogLevelDuration(object? state)
+        {
+            if (_disposed || !_loggingEnabled)
+                return;
+
+            if (_currentConfig.LogLevelDurationSeconds > 0 &&
+                _logLevelStartTime != DateTime.MinValue)
+            {
+                var elapsed = DateTime.UtcNow - _logLevelStartTime;
+                if (elapsed.TotalSeconds >= _currentConfig.LogLevelDurationSeconds)
+                {
+                    // Duration expired, disable logging
+                    DisableLogging();
+                    _logLevelDurationTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                }
+            }
+        }
+
+        private void RunStartupSequence()
+        {
+            try
+            {
+                // Get connection string from environment or configuration
+                var connectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING") ??
+                                     Environment.GetEnvironmentVariable("ApplicationInsights__ConnectionString");
+
+                AzureMonitorDiagnosticsEventSourceCore.Log.RunStartupSequence(_currentConfig, connectionString);
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+            }
+        }
+
+        private bool HasConfigurationChanged(SelfDiagnosticsConfig newConfig)
+        {
+            return _currentConfig.LogDirectory != newConfig.LogDirectory ||
+                   _currentConfig.LogLevel != newConfig.LogLevel ||
+                   _currentConfig.FileSizeMB != newConfig.FileSizeMB ||
+                   _currentConfig.IncludeOtelSdkLogs != newConfig.IncludeOtelSdkLogs ||
+                   !DictionariesEqual(_currentConfig.LogFilters, newConfig.LogFilters) ||
+                   _currentConfig.LogLevelDurationSeconds != newConfig.LogLevelDurationSeconds;
+        }
+
+        private bool DictionariesEqual(Dictionary<string, string> dict1, Dictionary<string, string> dict2)
+        {
+            if (dict1.Count != dict2.Count)
+                return false;
+
+            foreach (var kvp in dict1)
+            {
+                if (!dict2.TryGetValue(kvp.Key, out var value) || value != kvp.Value)
+                    return false;
+            }
+
+            return true;
         }
 
         private string? FindConfigFile()
@@ -215,21 +287,20 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             return File.Exists(configPath) ? configPath : null;
         }
 
-        private bool TryParseConfiguration(string configContent, out string logDirectory,
-            out EventLevel logLevel, out int fileSizeMB)
+        private bool TryParseConfiguration(string configContent, string configPath, out SelfDiagnosticsConfig config)
         {
-            logDirectory = string.Empty;
-            logLevel = EventLevel.Informational;
-            fileSizeMB = DefaultFileSizeMB;
+            config = new SelfDiagnosticsConfig();
 
             try
             {
-                // Parse LogDirectory
-                var logDirMatch = LogDirectoryRegex.Match(configContent);
-                if (!logDirMatch.Success)
+                using var document = JsonDocument.Parse(configContent);
+                var root = document.RootElement;
+
+                // Required: LogDirectory
+                if (!root.TryGetProperty("LogDirectory", out var logDirElement))
                     return false;
 
-                logDirectory = logDirMatch.Groups["LogDirectory"].Value;
+                var logDirectory = logDirElement.GetString();
                 if (string.IsNullOrEmpty(logDirectory))
                     return false;
 
@@ -242,64 +313,114 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 // Ensure directory exists
                 Directory.CreateDirectory(logDirectory);
 
-                // Parse optional LogLevel (default to Info for Three Pillars)
+                config.LogDirectory = logDirectory!;
+                config.ConfigDirectory = Path.GetDirectoryName(configPath) ?? Directory.GetCurrentDirectory();
+                config.ConfigSource = "local config";
 
-                if (configContent.IndexOf("LogLevel", StringComparison.OrdinalIgnoreCase) >= 0)
+                // Optional: LogLevel
+                if (root.TryGetProperty("LogLevel", out var logLevelElement))
                 {
-                    var logLevelRegex = new Regex(@"""LogLevel""\s*:\s*""(?<LogLevel>.*?)""",
-                        RegexOptions.IgnoreCase);
-                    var logLevelMatch = logLevelRegex.Match(configContent);
-
-                    if (logLevelMatch.Success)
+                    var logLevelStr = logLevelElement.GetString();
+                    if (Enum.TryParse<EventLevel>(logLevelStr, true, out var logLevel))
                     {
-                        var logLevelStr = logLevelMatch.Groups["LogLevel"].Value;
-                        if (!Enum.TryParse<EventLevel>(logLevelStr, true, out logLevel))
-                        {
-                            logLevel = EventLevel.Informational;
-                        }
+                        config.LogLevel = logLevel;
                     }
                 }
 
-                // Parse optional FileSizeMB
-                if (configContent.IndexOf("FileSizeMB", StringComparison.OrdinalIgnoreCase) >= 0)
+                // Optional: FileSizeMB
+                if (root.TryGetProperty("FileSizeMB", out var fileSizeElement))
                 {
-                    var fileSizeRegex = new Regex(@"""FileSizeMB""\s*:\s*(?<FileSizeMB>\d+)",
-                        RegexOptions.IgnoreCase);
-                    var fileSizeMatch = fileSizeRegex.Match(configContent);
-
-                    if (fileSizeMatch.Success &&
-                        int.TryParse(fileSizeMatch.Groups["FileSizeMB"].Value, out var parsedSize))
+                    if (fileSizeElement.TryGetInt32(out var fileSizeMB))
                     {
-                        fileSizeMB = Math.Min(Math.Max(parsedSize, 1), MaxFileSizeMB);
+                        config.FileSizeMB = Math.Min(Math.Max(fileSizeMB, 1), MaxFileSizeMB);
                     }
+                }
+
+                // Optional: IncludeOtelSdkLogs
+                if (root.TryGetProperty("IncludeOtelSdkLogs", out var includeOtelElement))
+                {
+                    config.IncludeOtelSdkLogs = includeOtelElement.GetBoolean();
+                }
+
+                // Optional: LogLevelDurationSeconds
+                if (root.TryGetProperty("LogLevelDurationSeconds", out var durationElement))
+                {
+                    if (durationElement.TryGetInt32(out var duration))
+                    {
+                        config.LogLevelDurationSeconds = Math.Max(duration, 0);
+                    }
+                }
+
+                // Optional: LogFilters
+                if (root.TryGetProperty("LogFilters", out var logFiltersElement))
+                {
+                    ParseLogFilters(logFiltersElement, config);
                 }
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed(ex.Message, configPath);
                 return false;
             }
         }
 
-        private void UpdateEventSourceListening()
+        private void ParseLogFilters(JsonElement logFiltersElement, SelfDiagnosticsConfig config)
         {
+            try
+            {
+                if (logFiltersElement.TryGetProperty("EventSources", out var eventSourcesElement))
+                {
+                    foreach (var property in eventSourcesElement.EnumerateObject())
+                    {
+                        var eventSourceName = property.Name;
+                        var logLevelStr = property.Value.GetString();
+
+                        if (Enum.TryParse<EventLevel>(logLevelStr, true, out var eventLevel))
+                        {
+                            config.LogFilters[eventSourceName] = logLevelStr!;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed($"LogFilters parsing error: {ex.Message}", config.ConfigSource);
+            }
+        }
+
+        private void UpdateEventSourceConfiguration()
+        {
+            // Update event source level mappings
+            _eventSourceLevels.Clear();
+
+            foreach (var filter in _currentConfig.LogFilters)
+            {
+                if (Enum.TryParse<EventLevel>(filter.Value, true, out var level))
+                {
+                    _eventSourceLevels[filter.Key] = level;
+                }
+            }
+
             // Disable all first
             DisableAllEventSources();
 
-            // Re-enable with new level
+            // Re-enable with new configuration
             foreach (var eventSource in EventSource.GetSources())
             {
                 if (eventSource.Name != null)
                 {
                     if (eventSource.Name.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics", StringComparison.OrdinalIgnoreCase))
                     {
-                        EnableEvents(eventSource, _currentLogLevel);
+                        var level = GetEventSourceLevel(eventSource.Name);
+                        EnableEvents(eventSource, level);
                     }
-                    else if (_currentLogLevel <= EventLevel.Verbose &&
+                    else if (_currentConfig.IncludeOtelSdkLogs &&
                              eventSource.Name.StartsWith("OpenTelemetry", StringComparison.OrdinalIgnoreCase))
                     {
-                        EnableEvents(eventSource, _currentLogLevel);
+                        var level = GetEventSourceLevel(eventSource.Name);
+                        EnableEvents(eventSource, level);
                     }
                 }
             }
@@ -313,13 +434,25 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        private void DisableLogging()
+        {
+            _loggingEnabled = false;
+            _currentLogDirectory = null;
+            _currentLogFile = null;
+            _currentFileSize = 0;
+            _currentFileIndex = 0;
+            _logLevelStartTime = DateTime.MinValue;
+            DisableAllEventSources();
+        }
+
         private void CreateNewLogFile()
         {
-            if (_currentLogDirectory == null)
+            if (_currentConfig.LogDirectory == null)
                 return;
 
             lock (_fileLock)
             {
+                _currentLogDirectory = _currentConfig.LogDirectory;
                 _currentFileIndex = 0;
                 _currentFileSize = 0;
                 _currentLogFile = GenerateLogFileName();
@@ -340,11 +473,13 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             {
                 Timestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
                 ObservedTimestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
+                InstrumentationScope = eventData.EventSource?.Name ?? "Unknown",
+                EventName = eventData.EventName ?? "UnknownEvent",
+                TraceId = null, // Will be populated by specific events when available
+                SpanId = null,  // Will be populated by specific events when available
                 SeverityText = MapEventLevelToSeverityText(eventData.Level),
                 SeverityNumber = MapEventLevelToSeverityNumber(eventData.Level),
-                Body = eventData.Message ?? string.Empty,
-                EventName = eventData.EventName ?? "UnknownEvent",
-                InstrumentationScope = eventData.EventSource?.Name ?? "Unknown",
+                Body = FormatEventMessage(eventData),
                 Resource = new Dictionary<string, object>
                 {
                     ["service.name"] = _processName,
@@ -353,6 +488,22 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 },
                 Attributes = CreateAttributes(eventData)
             };
+        }
+
+        private string FormatEventMessage(EventWrittenEventArgs eventData)
+        {
+            // Return the formatted message without placeholders
+            var message = eventData.Message ?? string.Empty;
+
+            // For non-Azure Monitor events (when IncludeOtelSdkLogs is true), return message as-is
+            if (!eventData.EventSource.Name.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics"))
+            {
+                return message;
+            }
+
+            // For Azure Monitor events, the message should already be properly formatted
+            // since we're using proper string formatting in the EventSource methods
+            return message;
         }
 
         private static string MapEventLevelToSeverityText(EventLevel level)
@@ -465,7 +616,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var jsonBytes = Encoding.UTF8.GetBytes(jsonText);
 
                 // Check if we need to rotate the file
-                if (_currentFileSize + jsonBytes.Length > _currentFileSizeMB * 1024 * 1024)
+                if (_currentFileSize + jsonBytes.Length > _currentConfig.FileSizeMB * 1024 * 1024)
                 {
                     RotateLogFile();
                 }
@@ -510,6 +661,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             _disposed = true;
 
             _configTimer?.Dispose();
+            _logLevelDurationTimer?.Dispose();
 
             // Process any remaining log entries
             ProcessLogQueue();
