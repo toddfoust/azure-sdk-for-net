@@ -35,72 +35,48 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         #region Self-Diagnostics Startup Sequence Events
 
         /// <summary>
-        /// Event #1: Self-diagnostics initialization starting
+        /// Event #1: Configuration successfully loaded
         /// </summary>
-        [Event(1, Level = EventLevel.Informational, Message = "Azure Monitor .NET OpenTelemetry Distro self-diagnostics starting")]
-        public void SelfDiagnosticsStarting()
-        {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
-            {
-                WriteEvent(1);
-            }
-        }
-
-        /// <summary>
-        /// Event #2: Configuration loading process beginning
-        /// </summary>
-        [Event(2, Level = EventLevel.Informational, Message = "Loading self-diagnostics configuration")]
-        public void SelfDiagnosticsConfigLoading()
-        {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
-            {
-                WriteEvent(2);
-            }
-        }
-
-        /// <summary>
-        /// Event #3: Configuration successfully loaded
-        /// </summary>
-        [Event(3, Level = EventLevel.Informational, Message = "Self-diagnostics configuration loaded from {configSource}")]
+        [Event(1, Level = EventLevel.Informational, Message = "Self-diagnostics configuration loaded from {0}")]
         public void SelfDiagnosticsConfigLoaded(string configSource, string configDirectory, string logDirectory,
             int fileSizeMB, string logLevel, string logFilters, int logLevelDurationSeconds)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(3, configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds);
+                WriteEvent(1, configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds);
             }
         }
 
         /// <summary>
-        /// Event #4: Agent attachment status report
+        /// Event #2: Agent attachment status report
         /// </summary>
-        [Event(4, Level = EventLevel.Informational, Message = "OpenTelemetry Agent attach status: {attachStatus}")]
+        [Event(2, Level = EventLevel.Informational, Message = "OpenTelemetry Agent attach status: {0}")]
         public void AttachStatusReport(string attachStatus, string attachMode, string backoffReason, string interopStatus)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(4, attachStatus, attachMode, backoffReason, interopStatus);
+                WriteEvent(2, attachStatus, attachMode, backoffReason, interopStatus);
             }
         }
 
         /// <summary>
-        /// Event #5: Connection endpoints DNS resolution report
+        /// Event #3: Connection endpoints DNS resolution report
         /// </summary>
-        [Event(5, Level = EventLevel.Informational, Message = "Resolved IP addresses for Application Insights endpoints")]
-        public void ConnectionEndpointsReport(string ingestionUrl, string ingestionIPs, string liveMetricsUrl, string liveMetricsIPs,
+        [Event(3, Level = EventLevel.Informational, Message = "Resolved IP addresses for Application Insights endpoints")]
+        public void EndpointResolutionReport(string ingestionUrl, string ingestionIPs, string liveMetricsUrl, string liveMetricsIPs,
             string profilerUrl, string profilerIPs, string snapshotDebuggerUrl, string snapshotDebuggerIPs)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(5, ingestionUrl, ingestionIPs, liveMetricsUrl, liveMetricsIPs, profilerUrl, profilerIPs, snapshotDebuggerUrl, snapshotDebuggerIPs);
+                WriteEvent(3, ingestionUrl, ingestionIPs, liveMetricsUrl, liveMetricsIPs, profilerUrl, profilerIPs, snapshotDebuggerUrl, snapshotDebuggerIPs);
             }
         }
 
         /// <summary>
-        /// Event #6: Environment and configuration details report
+        /// Event #4: Environment and configuration details report
         /// </summary>
-        [Event(6, Level = EventLevel.Informational, Message = "Reporting environment and configuration details")]
-        public void EnvironmentDetails(string osType, string osVersion, string machineName, int processId, string processName,
+        [Event(4, Level = EventLevel.Informational, Message = "Reporting environment and configuration details")]
+        public void EnvironmentDetailsReport(string osType, string osVersion, string machineName, int processId, string processName,
             string processPath, string workingDirectory, string agentDirectory, string instrumentationKey, string connectionString,
             string cloudProvider, string cloudPlatform, string cloudResourceId, string cloudRole, string cloudRoleInstance,
             double cpuUsagePercent, long memoryUsageMB, string samplingType, double samplingRate,
@@ -108,25 +84,34 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(6, osType, osVersion, machineName, processId, processName, processPath, workingDirectory, agentDirectory,
+                WriteEvent(4, osType, osVersion, machineName, processId, processName, processPath, workingDirectory, agentDirectory,
                     instrumentationKey, connectionString, cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
                     cpuUsagePercent, memoryUsageMB, samplingType, samplingRate, distributedTracingInbound, distributedTracingOutbound, customProcessors);
             }
         }
 
         /// <summary>
-        /// Event #7: Self-diagnostics startup completion
+        /// Event #5: Self-diagnostics startup completion
         /// </summary>
-        [Event(7, Level = EventLevel.Informational, Message = "Azure Monitor .NET OpenTelemetry Distro self-diagnostics started")]
+        [Event(5, Level = EventLevel.Informational, Message = "Azure Monitor .NET OpenTelemetry Distro self-diagnostics started")]
         public void SelfDiagnosticsStarted()
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(7);
+                WriteEvent(5);
             }
         }
 
-        #endregion
+        [Event(6, Message = "Persistent storage initialized. Retriable telemetry for Instrumentation Key '{0}' will be stored at: {1}", Level = EventLevel.Informational)]
+        public void InitializedPersistentStorage(string instrumentationKey, string storageDirectory)
+        {
+            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            {
+                WriteEvent(6, instrumentationKey, storageDirectory);
+            }
+        }
+
+       #endregion
 
         #region Agent Lifecycle Events
 
@@ -149,7 +134,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs configuration loading errors.
         /// </summary>
-        [Event(20, Level = EventLevel.Error, Message = "Failed to load self-diagnostics configuration from {configPath}: {errorMessage}")]
+        [Event(20, Level = EventLevel.Error, Message = "Failed to load self-diagnostics configuration from {0}: {1}")]
         public void ConfigurationLoadFailed(string configPath, string errorMessage)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -161,7 +146,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs configuration validation errors.
         /// </summary>
-        [Event(21, Level = EventLevel.Error, Message = "Self-diagnostics configuration validation failed: {validationError}")]
+        [Event(21, Level = EventLevel.Error, Message = "Self-diagnostics configuration validation failed: {0}")]
         public void ConfigurationValidationFailed(string validationError, string configSource)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -173,7 +158,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when connection string is parsed and validated.
         /// </summary>
-        [Event(22, Level = EventLevel.Informational, Message = "Connection string parsed successfully. Endpoint: {endpoint}, Authentication: {authType}")]
+        [Event(22, Level = EventLevel.Informational, Message = "Connection string parsed successfully. Endpoint: {0}, Authentication: {1}")]
         public void ConnectionStringParsed(string endpoint, string authType, string instrumentationKey)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -185,7 +170,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when self-diagnostics config file is missing.
         /// </summary>
-        [Event(23, Level = EventLevel.Warning, Message = "Self-diagnostics config file not found at {configPath}. Attempting Profile API fallback")]
+        [Event(23, Level = EventLevel.Warning, Message = "Self-diagnostics config file not found at {0}. Attempting Profile API fallback")]
         public void ConfigFileMissing(string configPath)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -201,7 +186,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs DNS resolution failures.
         /// </summary>
-        [Event(30, Level = EventLevel.Warning, Message = "DNS resolution failed for {hostname}: {errorMessage}")]
+        [Event(30, Level = EventLevel.Warning, Message = "DNS resolution failed for {0}: {1}")]
         public void DnsResolutionFailed(string hostname, string errorMessage)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -217,7 +202,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs successful Profile API calls.
         /// </summary>
-        [Event(40, Level = EventLevel.Informational, Message = "Profile API call successful. Endpoint: {endpoint}, Duration: {durationMs}ms")]
+        [Event(40, Level = EventLevel.Informational, Message = "Profile API call successful. Endpoint: {0}, Duration: {1}ms")]
         public void ProfileApiSuccess(string endpoint, int durationMs, string responseSize)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -229,7 +214,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs Profile API call failures.
         /// </summary>
-        [Event(41, Level = EventLevel.Warning, Message = "Profile API call failed. Endpoint: {endpoint}, Error: {errorMessage}. Falling back to local configuration")]
+        [Event(41, Level = EventLevel.Warning, Message = "Profile API call failed. Endpoint: {0}, Error: {1}. Falling back to local configuration")]
         public void ProfileApiFailed(string endpoint, string errorMessage, int statusCode)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -245,7 +230,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs unhandled exceptions in the agent.
         /// </summary>
-        [Event(50, Level = EventLevel.Error, Message = "Unhandled exception in agent: {exceptionMessage}")]
+        [Event(50, Level = EventLevel.Error, Message = "Unhandled exception in agent: {0} - {1}")]
         public void UnhandledException(string exceptionType, string exceptionMessage, string stackTrace)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -269,25 +254,19 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             try
             {
-                // Event #1: Starting
-                SelfDiagnosticsStarting();
-
-                // Event #2: Loading config
-                SelfDiagnosticsConfigLoading();
-
-                // Event #3: Config loaded
+                // Event #1: Config loaded
                 EmitConfigLoaded(config);
 
-                // Event #4: Attach status
+                // Event #2: Attach status
                 EmitAttachStatus();
 
-                // Event #5: Connection endpoints
+                // Event #3: Connection endpoints
                 EmitConnectionEndpoints(connectionString ?? string.Empty);
 
-                // Event #6: Environment details
+                // Event #4: Environment details
                 EmitEnvironmentDetails(connectionString ?? string.Empty);
 
-                // Event #7: Started
+                // Event #5: Started
                 SelfDiagnosticsStarted();
             }
             catch (Exception ex)
@@ -339,7 +318,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var profilerIPs = ResolveHostname(endpoints.ProfilerEndpoint);
                 var snapshotDebuggerIPs = ResolveHostname(endpoints.SnapshotDebuggerEndpoint);
 
-                ConnectionEndpointsReport(
+                EndpointResolutionReport(
                     endpoints.IngestionEndpoint, string.Join(", ", ingestionIPs),
                     endpoints.LiveMetricsEndpoint, string.Join(", ", liveMetricsIPs),
                     endpoints.ProfilerEndpoint, string.Join(", ", profilerIPs),
@@ -386,7 +365,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var distributedTracingOutbound = "Enabled";
                 var customProcessors = GetCustomProcessors();
 
-                EnvironmentDetails(osType, osVersion, machineName, processId, processName, processPath,
+                EnvironmentDetailsReport(osType, osVersion, machineName, processId, processName, processPath,
                     workingDirectory, agentDirectory, instrumentationKey, maskedConnectionString,
                     cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
                     cpuUsage, memoryUsage, samplingType, samplingRate,

@@ -13,10 +13,10 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     internal class DiagnosticLogEntry
     {
         [JsonPropertyOrder(1)]
-        public string Timestamp { get; set; } = string.Empty;
+        public string ObservedTimestamp { get; set; } = string.Empty;
 
         [JsonPropertyOrder(2)]
-        public string ObservedTimestamp { get; set; } = string.Empty;
+        public string Timestamp { get; set; } = string.Empty;
 
         [JsonPropertyOrder(3)]
         public string InstrumentationScope { get; set; } = string.Empty;

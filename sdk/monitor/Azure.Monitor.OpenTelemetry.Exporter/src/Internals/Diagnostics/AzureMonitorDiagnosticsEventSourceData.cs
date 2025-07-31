@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -27,211 +28,194 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             AzureMonitorDiagnosticsEventListenerManager.Initialize();
         }
 
-        #region Telemetry Production Events (Pillar 1)
+        #region Keywords for Telemetry Types
 
         /// <summary>
-        /// Logs when telemetry is produced by instrumentation (Pillar 1: Production).
-        /// This is the "birth certificate" for telemetry items.
+        /// Keywords for categorizing telemetry types for performance and filtering
         /// </summary>
-        [Event(1, Level = EventLevel.Informational, Message = "Telemetry produced. Type: {telemetryType}, Name: {operationName}")]
-        public void TelemetryProduced(string telemetryType, string operationName, string? traceId, string? spanId)
+        public static class Keywords
         {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            /// <summary>Request telemetry (AppRequests table) - incoming HTTP requests, RPC calls</summary>
+            public const EventKeywords Requests = (EventKeywords)0x0001;
+
+            /// <summary>Dependency telemetry (AppDependencies table) - outgoing calls, database queries</summary>
+            public const EventKeywords Dependencies = (EventKeywords)0x0002;
+
+            /// <summary>Trace/Message telemetry (AppTraces table) - log messages, debug traces</summary>
+            public const EventKeywords Traces = (EventKeywords)0x0004;
+
+            /// <summary>Exception telemetry (AppExceptions table) - errors and exceptions</summary>
+            public const EventKeywords Exceptions = (EventKeywords)0x0008;
+
+            /// <summary>Metric telemetry (customMetrics table) - performance counters, business metrics</summary>
+            public const EventKeywords Metrics = (EventKeywords)0x0010;
+
+            /// <summary>Custom Event telemetry (customEvents table) - business events</summary>
+            public const EventKeywords Events = (EventKeywords)0x0020;
+
+            /// <summary>PageView telemetry (AppPageViews table) - page navigation</summary>
+            public const EventKeywords PageViews = (EventKeywords)0x0040;
+
+            /// <summary>High-frequency events that may need special handling</summary>
+            public const EventKeywords HighFrequency = (EventKeywords)0x0080;
+        }
+
+        #endregion
+
+        #region Telemetry Production Events
+
+        /// <summary>
+        /// Logs Request telemetry production with level-appropriate detail (will appear in AppRequests table)
+        /// </summary>
+        [Event(1, Level = EventLevel.Informational, Keywords = Keywords.Requests,
+               Message = "Request telemetry produced: {0} ({1} {2})")]
+        public void RequestTelemetryProduced(string operationName, string httpMethod, string url,
+            double durationMs, int responseCode, bool success, string traceId, string spanId,
+            string activityKind, string instrumentationLibrary, string telemetryDetails, int payloadSizeBytes)
+        {
+            if (IsEnabled(EventLevel.Informational, Keywords.Requests))
             {
-                WriteEvent(1, telemetryType, operationName, traceId ?? "Unknown", spanId ?? "Unknown");
+                WriteEvent(1, operationName ?? "Unknown", httpMethod ?? "Unknown", url ?? "Unknown",
+                    durationMs, responseCode, success, traceId ?? "", spanId ?? "",
+                    activityKind ?? "Unknown", instrumentationLibrary ?? "Unknown",
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs detailed telemetry production with payload information for verbose scenarios.
+        /// Logs Dependency telemetry production with level-appropriate detail (will appear in AppDependencies table)
         /// </summary>
-        [Event(2, Level = EventLevel.Verbose, Message = "Telemetry produced with details. Type: {telemetryType}")]
-        public void TelemetryProducedDetailed(string telemetryType, string operationName, string? traceId,
-            string? spanId, string telemetryData, int payloadSizeBytes)
+        [Event(2, Level = EventLevel.Informational, Keywords = Keywords.Dependencies,
+               Message = "Dependency telemetry produced: {0} ({1} -> {2})")]
+        public void DependencyTelemetryProduced(string dependencyName, string dependencyType, string target,
+            string data, double durationMs, bool success, string resultCode, string traceId, string spanId,
+            string activityKind, string instrumentationLibrary, string telemetryDetails, int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, Keywords.Dependencies))
             {
-                WriteEvent(2, telemetryType, operationName, traceId ?? "Unknown", spanId ?? "Unknown", telemetryData, payloadSizeBytes);
+                WriteEvent(2, dependencyName ?? "Unknown", dependencyType ?? "Unknown", target ?? "Unknown",
+                    data ?? "", durationMs, success, resultCode ?? "", traceId ?? "", spanId ?? "",
+                    activityKind ?? "Unknown", instrumentationLibrary ?? "Unknown",
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs when telemetry production fails.
+        /// Logs Trace/Message telemetry production with level-appropriate detail (will appear in AppTraces table)
         /// </summary>
-        [Event(3, Level = EventLevel.Error, Message = "Telemetry production failed. Type: {telemetryType}, Error: {errorMessage}")]
-        public void TelemetryProductionFailed(string telemetryType, string errorMessage, string operationName)
+        [Event(3, Level = EventLevel.Informational, Keywords = Keywords.Traces,
+               Message = "Trace telemetry produced: {0} (Level: {1})")]
+        public void TraceTelemetryProduced(string message, string severityLevel, string categoryName,
+            string traceId, string spanId, string loggerProvider, string instrumentationLibrary,
+            string telemetryDetails, int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Error, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, Keywords.Traces))
             {
-                WriteEvent(3, telemetryType, errorMessage, operationName);
+                WriteEvent(3, message ?? "Unknown", severityLevel ?? "Unknown", categoryName ?? "Unknown",
+                    traceId ?? "", spanId ?? "", loggerProvider ?? "Unknown", instrumentationLibrary ?? "Unknown",
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs different telemetry types being created.
+        /// Logs Exception telemetry production with level-appropriate detail (will appear in AppExceptions table)
         /// </summary>
-        [Event(4, Level = EventLevel.Informational, Message = "Request telemetry produced. Name: {requestName}, Duration: {durationMs}ms")]
-        public void RequestTelemetryProduced(string requestName, string url, int durationMs, int responseCode, bool success)
+        [Event(4, Level = EventLevel.Error, Keywords = Keywords.Exceptions,
+               Message = "Exception telemetry produced: {0} - {1}")]
+        public void ExceptionTelemetryProduced(string exceptionType, string exceptionMessage, string problemId,
+            string traceId, string spanId, string instrumentationLibrary, bool hasStackTrace, string telemetryDetails,
+            int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            if (IsEnabled(EventLevel.Error, Keywords.Exceptions))
             {
-                WriteEvent(4, requestName, url, durationMs, responseCode, success);
+                WriteEvent(4, exceptionType ?? "Unknown", exceptionMessage ?? "Unknown", problemId ?? "Unknown",
+                    traceId ?? "", spanId ?? "", instrumentationLibrary ?? "Unknown", hasStackTrace,
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs dependency telemetry creation.
+        /// Logs Metric telemetry production with level-appropriate detail (will appear in customMetrics table)
         /// </summary>
-        [Event(5, Level = EventLevel.Informational, Message = "Dependency telemetry produced. Name: {dependencyName}, Type: {dependencyType}")]
-        public void DependencyTelemetryProduced(string dependencyName, string dependencyType, string target, int durationMs, bool success)
+        [Event(5, Level = EventLevel.Informational, Keywords = Keywords.Metrics,
+               Message = "Metric telemetry produced: {0} = {1} {2} (Type: {3})")]
+        public void MetricTelemetryProduced(string metricName, double value, string unit, string metricType,
+            string aggregationType, string instrumentType, string instrumentationLibrary, int dataPointCount,
+            string telemetryDetails, int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, Keywords.Metrics))
             {
-                WriteEvent(5, dependencyName, dependencyType, target, durationMs, success);
+                WriteEvent(5, metricName ?? "Unknown", value, unit ?? "", metricType ?? "Unknown",
+                    aggregationType ?? "Unknown", instrumentType ?? "Unknown", instrumentationLibrary ?? "Unknown",
+                    dataPointCount, telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs trace/log telemetry creation.
+        /// Logs Custom Event telemetry production with level-appropriate detail (will appear in customEvents table)
         /// </summary>
-        [Event(6, Level = EventLevel.Informational, Message = "Trace telemetry produced. Level: {logLevel}, Message: {message}")]
-        public void TraceTelemetryProduced(string logLevel, string message, string categoryName)
+        [Event(6, Level = EventLevel.Informational, Keywords = Keywords.Events,
+               Message = "Custom Event telemetry produced: {0}")]
+        public void EventTelemetryProduced(string eventName, string traceId, string spanId,
+            string instrumentationLibrary, int propertiesCount, int measurementsCount,
+            string telemetryDetails, int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, Keywords.Events))
             {
-                WriteEvent(6, logLevel, message, categoryName);
+                WriteEvent(6, eventName ?? "Unknown", traceId ?? "", spanId ?? "",
+                    instrumentationLibrary ?? "Unknown", propertiesCount, measurementsCount,
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         /// <summary>
-        /// Logs metric telemetry creation.
+        /// Logs PageView telemetry production with level-appropriate detail (will appear in AppPageViews table)
         /// </summary>
-        [Event(7, Level = EventLevel.Informational, Message = "Metric telemetry produced. Name: {metricName}, Value: {value}")]
-        public void MetricTelemetryProduced(string metricName, double value, string unit, string metricType)
+        [Event(7, Level = EventLevel.Informational, Keywords = Keywords.PageViews,
+               Message = "PageView telemetry produced: {0} ({1})")]
+        public void PageViewTelemetryProduced(string pageName, string url, double durationMs,
+            string traceId, string spanId, string instrumentationLibrary,
+            string telemetryDetails, int payloadSizeBytes)
         {
-            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, Keywords.PageViews))
             {
-                WriteEvent(7, metricName, value, unit, metricType);
-            }
-        }
-
-        /// <summary>
-        /// Logs exception telemetry creation.
-        /// </summary>
-        [Event(8, Level = EventLevel.Error, Message = "Exception telemetry produced. Type: {exceptionType}, Message: {exceptionMessage}")]
-        public void ExceptionTelemetryProduced(string exceptionType, string exceptionMessage, string stackTrace)
-        {
-            if (IsEnabled(EventLevel.Error, EventKeywords.None))
-            {
-                WriteEvent(8, exceptionType, exceptionMessage, stackTrace);
+                WriteEvent(7, pageName ?? "Unknown", url ?? "Unknown", durationMs,
+                    traceId ?? "", spanId ?? "", instrumentationLibrary ?? "Unknown",
+                    telemetryDetails ?? "", payloadSizeBytes);
             }
         }
 
         #endregion
 
-        #region Telemetry Processing and Enrichment Events
+        #region Telemetry Processing Events
 
         /// <summary>
-        /// Logs telemetry processing pipeline stages.
+        /// Logs when telemetry is dropped during processing/sampling
         /// </summary>
-        [Event(20, Level = EventLevel.Verbose, Message = "Telemetry processing stage. Stage: {stageName}, Items: {itemCount}")]
-        public void TelemetryProcessingStage(string stageName, int itemCount, int durationMs, string processorName)
+        [Event(10, Level = EventLevel.Warning, Keywords = Keywords.HighFrequency,
+               Message = "Telemetry dropped: {0} - {1}")]
+        public void TelemetryDropped(string telemetryType, string reason, string traceId, string spanId,
+            string samplerType, double samplingRate)
         {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
+            if (IsEnabled(EventLevel.Warning, Keywords.HighFrequency))
             {
-                WriteEvent(20, stageName, itemCount, durationMs, processorName);
+                WriteEvent(10, telemetryType ?? "Unknown", reason ?? "Unknown", traceId ?? "", spanId ?? "",
+                    samplerType ?? "Unknown", samplingRate);
             }
         }
 
         /// <summary>
-        /// Logs when telemetry is dropped during processing.
+        /// Logs when telemetry fails validation or transformation
         /// </summary>
-        [Event(21, Level = EventLevel.Warning, Message = "Telemetry dropped during processing. Stage: {stageName}, Reason: {dropReason}")]
-        public void TelemetryDroppedDuringProcessing(string stageName, string dropReason, int droppedCount, string processorName)
+        [Event(11, Level = EventLevel.Error, Keywords = Keywords.HighFrequency,
+               Message = "Telemetry processing failed: {0} - {1}")]
+        public void TelemetryProcessingFailed(string telemetryType, string errorMessage, string validationRule,
+            string traceId, string spanId)
         {
-            if (IsEnabled(EventLevel.Warning, EventKeywords.None))
+            if (IsEnabled(EventLevel.Error, Keywords.HighFrequency))
             {
-                WriteEvent(21, stageName, dropReason, droppedCount, processorName);
-            }
-        }
-
-        /// <summary>
-        /// Logs telemetry enrichment operations.
-        /// </summary>
-        [Event(22, Level = EventLevel.Verbose, Message = "Telemetry enriched. Enricher: {enricherName}, Properties added: {propertiesAdded}")]
-        public void TelemetryEnriched(string enricherName, int propertiesAdded, string telemetryType)
-        {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
-            {
-                WriteEvent(22, enricherName, propertiesAdded, telemetryType);
-            }
-        }
-
-        /// <summary>
-        /// Logs telemetry transformation operations.
-        /// </summary>
-        [Event(23, Level = EventLevel.Verbose, Message = "Telemetry transformed. Transformer: {transformerName}, Type: {telemetryType}")]
-        public void TelemetryTransformed(string transformerName, string telemetryType, string beforeValue, string afterValue)
-        {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
-            {
-                WriteEvent(23, transformerName, telemetryType, beforeValue, afterValue);
-            }
-        }
-
-        #endregion
-
-        #region Sampling Events
-
-        /// <summary>
-        /// Logs when telemetry is dropped due to sampling.
-        /// </summary>
-        [Event(30, Level = EventLevel.Verbose, Message = "Telemetry sampled out. Type: {telemetryType}, TraceId: {traceId}, Reason: {samplingReason}")]
-        public void TelemetrySampledOut(string telemetryType, string traceId, string samplingReason, double samplingRate)
-        {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
-            {
-                WriteEvent(30, telemetryType, traceId, samplingReason, samplingRate);
-            }
-        }
-
-        /// <summary>
-        /// Logs sampling decision details.
-        /// </summary>
-        [Event(31, Level = EventLevel.Verbose, Message = "Sampling decision made. TraceId: {traceId}, Decision: {decision}, Rate: {samplingRate}")]
-        public void SamplingDecisionMade(string traceId, string decision, double samplingRate, string samplerType)
-        {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
-            {
-                WriteEvent(31, traceId, decision, samplingRate, samplerType);
-            }
-        }
-
-        #endregion
-
-        #region Data Production Error Events
-
-        /// <summary>
-        /// Logs data layer exceptions.
-        /// </summary>
-        [Event(40, Level = EventLevel.Error, Message = "Data production exception. Component: {component}, Error: {errorMessage}")]
-        public void DataProductionException(string component, string errorType, string errorMessage, string stackTrace)
-        {
-            if (IsEnabled(EventLevel.Error, EventKeywords.None))
-            {
-                WriteEvent(40, component, errorType, errorMessage, stackTrace);
-            }
-        }
-
-        /// <summary>
-        /// Logs telemetry serialization errors.
-        /// </summary>
-        [Event(41, Level = EventLevel.Error, Message = "Telemetry serialization failed. Type: {telemetryType}, Error: {errorMessage}")]
-        public void TelemetrySerializationFailed(string telemetryType, string errorMessage, string telemetryData)
-        {
-            if (IsEnabled(EventLevel.Error, EventKeywords.None))
-            {
-                WriteEvent(41, telemetryType, errorMessage, telemetryData);
+                WriteEvent(11, telemetryType ?? "Unknown", errorMessage ?? "Unknown", validationRule ?? "Unknown",
+                    traceId ?? "", spanId ?? "");
             }
         }
 
@@ -240,192 +224,327 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         #region Non-Event Helper Methods
 
         /// <summary>
-        /// Helper method to log telemetry production with structured data.
+        /// Helper method to log Activity/Span as Request telemetry
         /// </summary>
         [NonEvent]
-        public void LogTelemetryProduction(string telemetryType, object telemetryData,
-            string? traceId = null, string? spanId = null)
+        public void LogRequestFromActivity(Activity activity, string? instrumentationLibrary = null)
         {
-            if (!IsEnabled(EventLevel.Informational, EventKeywords.None))
+            if (!IsEnabled(EventLevel.Informational, Keywords.Requests))
                 return;
 
             try
             {
-                var operationName = ExtractOperationName(telemetryData);
+                var operationName = activity.DisplayName ?? activity.OperationName;
+                var httpMethod = GetActivityTagValue(activity, "http.request.method")?.ToString() ??
+                                GetActivityTagValue(activity, "http.method")?.ToString() ?? "Unknown";
+                var url = GetActivityTagValue(activity, "url.full")?.ToString() ??
+                         GetActivityTagValue(activity, "http.url")?.ToString() ?? "Unknown";
+                var responseCode = GetIntTagValue(activity, "http.response.status_code") ??
+                                  GetIntTagValue(activity, "http.status_code") ?? 200;
+                var success = responseCode < 400;
+                var durationMs = activity.Duration.TotalMilliseconds;
 
-                TelemetryProduced(telemetryType, operationName, traceId, spanId);
+                // Always include TraceId and SpanId for correlation
+                var traceId = activity.TraceId.ToString();
+                var spanId = activity.SpanId.ToString();
 
-                // Log specific telemetry type details
-                LogSpecificTelemetryType(telemetryType, telemetryData);
+                // Determine what level of detail to include based on current EventLevel
+                string telemetryDetails = "";
+                int payloadSize = 0;
 
-                // Log detailed information if verbose logging is enabled
-                if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
+                if (IsEnabled(EventLevel.Verbose, Keywords.Requests))
                 {
-                    var serializedData = SerializeTelemetryData(telemetryData);
-                    var payloadSize = Encoding.UTF8.GetByteCount(serializedData);
-                    TelemetryProducedDetailed(telemetryType, operationName, traceId, spanId, serializedData, payloadSize);
+                    telemetryDetails = SerializeActivityToJson(activity);
+                    payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
+
+                RequestTelemetryProduced(operationName, httpMethod, url, durationMs, responseCode, success,
+                    traceId, spanId, activity.Kind.ToString(),
+                    instrumentationLibrary ?? "Unknown", telemetryDetails, payloadSize);
             }
             catch (Exception ex)
             {
-                DataProductionException("TelemetryProduction", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                TelemetryProcessingFailed("Request", ex.Message, "Activity serialization",
+                    activity.TraceId.ToString(), activity.SpanId.ToString());
             }
         }
 
         /// <summary>
-        /// Helper method to log sampling decisions.
+        /// Helper method to log Activity/Span as Dependency telemetry
         /// </summary>
         [NonEvent]
-        public void LogSamplingDecision(string traceId, bool sampled, double samplingRate,
-            string samplerType, string? reason = null)
+        public void LogDependencyFromActivity(Activity activity, string? instrumentationLibrary = null)
         {
-            if (!IsEnabled(EventLevel.Verbose, EventKeywords.None))
+            if (!IsEnabled(EventLevel.Informational, Keywords.Dependencies))
                 return;
 
             try
             {
-                var decision = sampled ? "Sampled" : "NotSampled";
-                SamplingDecisionMade(traceId, decision, samplingRate, samplerType);
+                var dependencyName = activity.DisplayName ?? activity.OperationName;
+                var dependencyType = DetermineDependencyType(activity);
+                var target = GetTargetFromActivity(activity);
+                var data = GetDataFromActivity(activity);
+                var resultCode = GetIntTagValue(activity, "http.response.status_code")?.ToString() ??
+                                GetIntTagValue(activity, "http.status_code")?.ToString() ??
+                                GetTagValue(activity, "db.response.status_code") ?? "0";
+                var success = activity.Status != ActivityStatusCode.Error;
+                var durationMs = activity.Duration.TotalMilliseconds;
 
-                if (!sampled && reason != null)
+                // Always include TraceId and SpanId for correlation
+                var traceId = activity.TraceId.ToString();
+                var spanId = activity.SpanId.ToString();
+
+                // Determine what level of detail to include based on current EventLevel
+                string telemetryDetails = "";
+                int payloadSize = 0;
+
+                if (IsEnabled(EventLevel.Verbose, Keywords.Dependencies))
                 {
-                    TelemetrySampledOut("Trace", traceId, reason, samplingRate);
+                    telemetryDetails = SerializeActivityToJson(activity);
+                    payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
+
+                DependencyTelemetryProduced(dependencyName, dependencyType, target, data, durationMs, success,
+                    resultCode, traceId, spanId, activity.Kind.ToString(),
+                    instrumentationLibrary ?? "Unknown", telemetryDetails, payloadSize);
             }
             catch (Exception ex)
             {
-                DataProductionException("SamplingDecision", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                TelemetryProcessingFailed("Dependency", ex.Message, "Activity serialization",
+                    activity.TraceId.ToString(), activity.SpanId.ToString());
             }
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private void LogSpecificTelemetryType(string telemetryType, object telemetryData)
+        /// <summary>
+        /// Helper method to log OpenTelemetry LogRecord as Trace telemetry
+        /// </summary>
+        [NonEvent]
+        public void LogTraceFromLogRecord(object logRecord, string? instrumentationLibrary = null)
         {
+            if (!IsEnabled(EventLevel.Informational, Keywords.Traces))
+                return;
+
             try
             {
-                switch (telemetryType.ToLower())
+                // Use reflection to access LogRecord properties
+                var logRecordType = logRecord.GetType();
+                var body = GetPropertyValue(logRecordType, logRecord, "Body") ??
+                          GetPropertyValue(logRecordType, logRecord, "FormattedMessage") ?? "Unknown";
+                var severityLevel = GetPropertyValue(logRecordType, logRecord, "SeverityText") ?? "Information";
+                var categoryName = GetPropertyValue(logRecordType, logRecord, "CategoryName") ?? "Unknown";
+
+                // Always include TraceId and SpanId for correlation (even if empty)
+                var traceId = GetPropertyValue(logRecordType, logRecord, "TraceId") ?? "";
+                var spanId = GetPropertyValue(logRecordType, logRecord, "SpanId") ?? "";
+
+                // Determine what level of detail to include based on current EventLevel
+                string telemetryDetails = "";
+                int payloadSize = 0;
+
+                if (IsEnabled(EventLevel.Verbose, Keywords.Traces))
                 {
-                    case "request":
-                        LogRequestTelemetry(telemetryData);
-                        break;
-                    case "dependency":
-                        LogDependencyTelemetry(telemetryData);
-                        break;
-                    case "trace":
-                    case "log":
-                        LogTraceTelemetry(telemetryData);
-                        break;
-                    case "metric":
-                        LogMetricTelemetry(telemetryData);
-                        break;
-                    case "exception":
-                        LogExceptionTelemetry(telemetryData);
-                        break;
+                    telemetryDetails = SerializeObjectToJson(logRecord);
+                    payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
+                }
+
+                TraceTelemetryProduced(body, severityLevel, categoryName, traceId, spanId,
+                    "Microsoft.Extensions.Logging", instrumentationLibrary ?? "Unknown",
+                    telemetryDetails, payloadSize);
+            }
+            catch (Exception ex)
+            {
+                TelemetryProcessingFailed("Trace", ex.Message, "LogRecord serialization", "", "");
+            }
+        }
+
+        /// <summary>
+        /// Helper method to log Exception telemetry
+        /// </summary>
+        [NonEvent]
+        public void LogExceptionTelemetry(Exception exception, Activity? activity = null, string? instrumentationLibrary = null)
+        {
+            if (!IsEnabled(EventLevel.Error, Keywords.Exceptions))
+                return;
+
+            try
+            {
+                var exceptionType = exception.GetType().Name;
+                var exceptionMessage = exception.Message;
+                var problemId = GenerateProblemId(exception);
+                var hasStackTrace = !string.IsNullOrEmpty(exception.StackTrace);
+
+                // Always include TraceId and SpanId for correlation (even if empty)
+                var traceId = activity?.TraceId.ToString() ?? "";
+                var spanId = activity?.SpanId.ToString() ?? "";
+
+                // Determine what level of detail to include based on current EventLevel
+                string telemetryDetails = "";
+                int payloadSize = 0;
+
+                if (IsEnabled(EventLevel.Verbose, Keywords.Exceptions))
+                {
+                    var exceptionData = new
+                    {
+                        Type = exceptionType,
+                        Message = exceptionMessage,
+                        StackTrace = exception.StackTrace,
+                        ProblemId = problemId,
+                        InnerException = exception.InnerException?.GetType().Name
+                    };
+                    telemetryDetails = JsonSerializer.Serialize(exceptionData);
+                    payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
+                }
+
+                ExceptionTelemetryProduced(exceptionType, exceptionMessage, problemId,
+                    traceId, spanId, instrumentationLibrary ?? "Unknown", hasStackTrace,
+                    telemetryDetails, payloadSize);
+            }
+            catch (Exception ex)
+            {
+                TelemetryProcessingFailed("Exception", ex.Message, "Exception serialization", "", "");
+            }
+        }
+
+        /// <summary>
+        /// Helper method to log Metric telemetry
+        /// </summary>
+        [NonEvent]
+        public void LogMetricTelemetry(string metricName, double value, string unit = "",
+            string metricType = "Unknown", string? instrumentationLibrary = null)
+        {
+            if (!IsEnabled(EventLevel.Informational, Keywords.Metrics))
+                return;
+
+            try
+            {
+                // Determine what level of detail to include based on current EventLevel
+                string telemetryDetails = "";
+                int payloadSize = 0;
+
+                if (IsEnabled(EventLevel.Verbose, Keywords.Metrics))
+                {
+                    var metricData = new
+                    {
+                        Name = metricName,
+                        Value = value,
+                        Unit = unit,
+                        Type = metricType,
+                        Timestamp = DateTime.UtcNow
+                    };
+                    telemetryDetails = JsonSerializer.Serialize(metricData);
+                    payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
+                }
+
+                MetricTelemetryProduced(metricName, value, unit, metricType, "Sum", "Counter",
+                    instrumentationLibrary ?? "Unknown", 1, telemetryDetails, payloadSize);
+            }
+            catch (Exception ex)
+            {
+                TelemetryProcessingFailed("Metric", ex.Message, "Metric serialization", "", "");
+            }
+        }
+
+        #endregion
+
+        #region Private Helper Methods
+
+        private string DetermineDependencyType(Activity activity)
+        {
+            // Check for HTTP dependencies
+            if (GetActivityTagValue(activity, "http.request.method") != null || GetActivityTagValue(activity, "http.method") != null)
+                return "Http";
+
+            // Check for database dependencies
+            if (GetActivityTagValue(activity, "db.system") != null)
+            {
+                var dbSystem = GetActivityTagValue(activity, "db.system")?.ToString();
+                return dbSystem switch
+                {
+                    "mssql" or "sqlserver" => "SQL",
+                    "mysql" => "MySQL",
+                    "postgresql" => "PostgreSQL",
+                    "redis" => "Redis",
+                    "cosmosdb" => "Azure DocumentDB",
+                    _ => "Database"
+                };
+            }
+
+            // Check for messaging dependencies
+            if (GetActivityTagValue(activity, "messaging.system") != null)
+                return "Queue";
+
+            // Default for other types
+            return "Other";
+        }
+
+        private string GetTargetFromActivity(Activity activity)
+        {
+            // For HTTP dependencies
+            var host = GetActivityTagValue(activity, "server.address")?.ToString() ??
+                      GetActivityTagValue(activity, "http.host")?.ToString() ??
+                      GetActivityTagValue(activity, "net.peer.name")?.ToString();
+            var port = GetActivityTagValue(activity, "server.port")?.ToString() ??
+                      GetActivityTagValue(activity, "net.peer.port")?.ToString();
+
+            if (!string.IsNullOrEmpty(host))
+            {
+                return !string.IsNullOrEmpty(port) ? $"{host}:{port}" : host!; // host is guaranteed non-null here
+            }
+
+            // For database dependencies
+            var dbName = GetActivityTagValue(activity, "db.name")?.ToString();
+            if (!string.IsNullOrEmpty(dbName))
+                return dbName!; // dbName is guaranteed non-null here due to the check
+
+            return "Unknown";
+        }
+
+        private string GetDataFromActivity(Activity activity)
+        {
+            // For HTTP dependencies, return the full URL
+            var url = GetActivityTagValue(activity, "url.full")?.ToString() ?? GetActivityTagValue(activity, "http.url")?.ToString();
+            if (!string.IsNullOrEmpty(url))
+                return url!; // url is guaranteed non-null here due to the check
+
+            // For database dependencies, return the SQL statement
+            var statement = GetActivityTagValue(activity, "db.statement")?.ToString();
+            if (!string.IsNullOrEmpty(statement))
+                return statement!; // statement is guaranteed non-null here due to the check
+
+            return "";
+        }
+
+        private int? GetIntTagValue(Activity activity, string tagName)
+        {
+            var value = GetActivityTagValue(activity, tagName);
+            if (value != null && int.TryParse(value.ToString(), out var intValue))
+                return intValue;
+            return null;
+        }
+
+        private string GetTagValue(Activity activity, string tagName)
+        {
+            return GetActivityTagValue(activity, tagName)?.ToString() ?? "";
+        }
+
+        /// <summary>
+        /// .NET Standard 2.0 compatible way to get Activity tag values
+        /// </summary>
+        private object? GetActivityTagValue(Activity activity, string tagName)
+        {
+            // Always use the manual approach for maximum compatibility
+            // This works across all .NET versions (.NET Standard 2.0, .NET Framework, .NET 5+)
+            if (activity.Tags != null)
+            {
+                foreach (var tag in activity.Tags)
+                {
+                    if (string.Equals(tag.Key, tagName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return tag.Value; // tag.Value can be null, which is fine
+                    }
                 }
             }
-            catch
-            {
-                // Ignore errors in specific type logging
-            }
-        }
-
-        private void LogRequestTelemetry(object telemetryData)
-        {
-            try
-            {
-                var type = telemetryData.GetType();
-                var name = GetPropertyValue(type, telemetryData, "Name") ?? "Unknown";
-                var url = GetPropertyValue(type, telemetryData, "Url") ?? GetPropertyValue(type, telemetryData, "Uri") ?? "Unknown";
-                var duration = GetPropertyValue(type, telemetryData, "Duration");
-                var responseCode = GetPropertyValue(type, telemetryData, "ResponseCode") ?? GetPropertyValue(type, telemetryData, "ResultCode");
-                var success = GetPropertyValue(type, telemetryData, "Success");
-
-                var durationMs = ParseDuration(duration);
-                var responseCodeInt = ParseInt(responseCode);
-                var successBool = ParseBool(success);
-
-                RequestTelemetryProduced(name, url, durationMs, responseCodeInt, successBool);
-            }
-            catch
-            {
-                // Ignore parsing errors
-            }
-        }
-
-        private void LogDependencyTelemetry(object telemetryData)
-        {
-            try
-            {
-                var type = telemetryData.GetType();
-                var name = GetPropertyValue(type, telemetryData, "Name") ?? "Unknown";
-                var dependencyType = GetPropertyValue(type, telemetryData, "Type") ?? "Unknown";
-                var target = GetPropertyValue(type, telemetryData, "Target") ?? "Unknown";
-                var duration = GetPropertyValue(type, telemetryData, "Duration");
-                var success = GetPropertyValue(type, telemetryData, "Success");
-
-                var durationMs = ParseDuration(duration);
-                var successBool = ParseBool(success);
-
-                DependencyTelemetryProduced(name, dependencyType, target, durationMs, successBool);
-            }
-            catch
-            {
-                // Ignore parsing errors
-            }
-        }
-
-        private void LogTraceTelemetry(object telemetryData)
-        {
-            try
-            {
-                var type = telemetryData.GetType();
-                var message = GetPropertyValue(type, telemetryData, "Message") ?? "Unknown";
-                var severityLevel = GetPropertyValue(type, telemetryData, "SeverityLevel") ?? GetPropertyValue(type, telemetryData, "LogLevel");
-                var categoryName = GetPropertyValue(type, telemetryData, "CategoryName") ?? GetPropertyValue(type, telemetryData, "Category") ?? "Unknown";
-
-                TraceTelemetryProduced(severityLevel ?? "Unknown", message, categoryName);
-            }
-            catch
-            {
-                // Ignore parsing errors
-            }
-        }
-
-        private void LogMetricTelemetry(object telemetryData)
-        {
-            try
-            {
-                var type = telemetryData.GetType();
-                var name = GetPropertyValue(type, telemetryData, "Name") ?? "Unknown";
-                var value = GetPropertyValue(type, telemetryData, "Value") ?? GetPropertyValue(type, telemetryData, "Sum");
-                var unit = GetPropertyValue(type, telemetryData, "Unit") ?? "";
-                var metricType = GetPropertyValue(type, telemetryData, "MetricType") ?? type.Name;
-
-                var valueDouble = ParseDouble(value);
-
-                MetricTelemetryProduced(name, valueDouble, unit, metricType);
-            }
-            catch
-            {
-                // Ignore parsing errors
-            }
-        }
-
-        private void LogExceptionTelemetry(object telemetryData)
-        {
-            try
-            {
-                var type = telemetryData.GetType();
-                var exceptionType = GetPropertyValue(type, telemetryData, "ExceptionType") ?? type.Name;
-                var message = GetPropertyValue(type, telemetryData, "Message") ?? "Unknown";
-                var stackTrace = GetPropertyValue(type, telemetryData, "StackTrace") ?? "";
-
-                ExceptionTelemetryProduced(exceptionType, message, stackTrace);
-            }
-            catch
-            {
-                // Ignore parsing errors
-            }
+            return null;
         }
 
         private string? GetPropertyValue(Type type, object obj, string propertyName)
@@ -441,63 +560,67 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-        private int ParseDuration(string? duration)
-        {
-            if (duration == null)
-                return 0;
-
-            if (TimeSpan.TryParse(duration, out var timeSpan))
-                return (int)timeSpan.TotalMilliseconds;
-
-            if (int.TryParse(duration, out var ms))
-                return ms;
-
-            return 0;
-        }
-
-        private int ParseInt(string? value)
-        {
-            return int.TryParse(value, out var result) ? result : 0;
-        }
-
-        private double ParseDouble(string? value)
-        {
-            return double.TryParse(value, out var result) ? result : 0.0;
-        }
-
-        private bool ParseBool(string? value)
-        {
-            return bool.TryParse(value, out var result) && result;
-        }
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private string ExtractOperationName(object telemetryData)
+        private string SerializeActivityToJson(Activity activity)
         {
             try
             {
-                var type = telemetryData.GetType();
-                var nameProperty = type.GetProperty("Name") ?? type.GetProperty("OperationName");
-                return nameProperty?.GetValue(telemetryData)?.ToString() ?? "Unknown";
-            }
-            catch
-            {
-                return "Unknown";
-            }
-        }
-
-        private string SerializeTelemetryData(object telemetryData)
-        {
-            try
-            {
-                return JsonSerializer.Serialize(telemetryData, new JsonSerializerOptions
+                var activityData = new
                 {
-                    WriteIndented = false,
-                    MaxDepth = 5 // Prevent deep recursion
-                });
+                    TraceId = activity.TraceId.ToString(),
+                    SpanId = activity.SpanId.ToString(),
+                    ParentSpanId = activity.ParentSpanId.ToString(),
+                    OperationName = activity.OperationName,
+                    DisplayName = activity.DisplayName,
+                    Kind = activity.Kind.ToString(),
+                    Status = activity.Status.ToString(),
+                    StatusDescription = activity.StatusDescription,
+                    StartTime = activity.StartTimeUtc,
+                    Duration = activity.Duration,
+                    Tags = activity.Tags?.ToDictionary(kv => kv.Key, kv => kv.Value),
+                    Events = activity.Events?.Select(e => new { e.Name, e.Timestamp, Attributes = e.Tags?.ToDictionary(kv => kv.Key, kv => kv.Value) })
+                };
+
+                return JsonSerializer.Serialize(activityData, new JsonSerializerOptions { WriteIndented = false });
             }
             catch
             {
-                return telemetryData.ToString() ?? "null";
+                return "{}";
+            }
+        }
+
+        private string SerializeObjectToJson(object obj)
+        {
+            try
+            {
+                return JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = false });
+            }
+            catch
+            {
+                return obj?.ToString() ?? "{}";
+            }
+        }
+
+        private string GenerateProblemId(Exception exception)
+        {
+            try
+            {
+                var stackTrace = exception.StackTrace;
+                if (string.IsNullOrEmpty(stackTrace))
+                    return exception.GetType().Name;
+
+                // Extract the first method from the stack trace
+                var lines = stackTrace.Split('\n');
+                var firstLine = lines.FirstOrDefault(l => l.Contains(" at "))?.Trim();
+                if (firstLine != null)
+                {
+                    return $"{exception.GetType().Name} at {firstLine.Substring(firstLine.IndexOf(" at ") + 4)}";
+                }
+
+                return exception.GetType().Name;
+            }
+            catch
+            {
+                return exception.GetType().Name;
             }
         }
 

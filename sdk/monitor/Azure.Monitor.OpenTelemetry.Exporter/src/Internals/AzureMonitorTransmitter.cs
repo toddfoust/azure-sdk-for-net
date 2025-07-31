@@ -3,6 +3,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Tracing;
+using System.Linq;
+using System.Net;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core.Pipeline;
@@ -12,7 +16,6 @@ using Azure.Monitor.OpenTelemetry.Exporter.Internals.PersistentStorage;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Platform;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Statsbeat;
 using Azure.Monitor.OpenTelemetry.Exporter.Models;
-
 using OpenTelemetry;
 using OpenTelemetry.PersistentStorage.Abstractions;
 using OpenTelemetry.PersistentStorage.FileSystem;
@@ -116,6 +119,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                         instrumentationKey: connectionVars.InstrumentationKey);
 
                     AzureMonitorExporterEventSource.Log.InitializedPersistentStorage(connectionVars.InstrumentationKey, storageDirectory);
+                    AzureMonitorDiagnosticsEventSourceCore.Log.InitializedPersistentStorage(connectionVars.InstrumentationKey, storageDirectory);
 
                     return new FileBlobProvider(storageDirectory);
                 }
@@ -166,6 +170,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                 return result;
             }
 
+            var telemetryList = telemetryItems.ToList();
+
+            // ADF PILLAR 1: Log telemetry production (what telemetry was created for ingestion)
+            LogTelemetryItemsProduced(telemetryList, origin);
+
             try
             {
                 if (_transmissionStateManager.State == TransmissionState.Closed)
@@ -204,6 +213,388 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
 
             return result;
         }
+
+        #region ADF Integration Helper Methods
+
+        /// <summary>
+        /// Logs all telemetry items using ADF Pillar 1 (Production logging)
+        /// </summary>
+        private void LogTelemetryItemsProduced(List<TelemetryItem> telemetryItems, TelemetryItemOrigin origin)
+        {
+            // Only log if diagnostics are enabled to avoid performance impact
+            if (!AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled())
+                return;
+
+            foreach (var item in telemetryItems)
+            {
+                try
+                {
+                    LogSingleTelemetryItem(item, origin);
+                }
+                catch (Exception ex)
+                {
+                    AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                        item.Name ?? "Unknown", ex.Message, "Pillar 1 logging",
+                        ExtractTraceId(item), ExtractSpanId(item));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Logs a single telemetry item based on its type
+        /// </summary>
+        private void LogSingleTelemetryItem(TelemetryItem item, TelemetryItemOrigin origin)
+        {
+            var telemetryType = item.Name?.ToLowerInvariant() ?? "unknown";
+            var traceId = ExtractTraceId(item);
+            var spanId = ExtractSpanId(item);
+
+            switch (telemetryType)
+            {
+                case "request":
+                    LogRequestTelemetryItem(item, traceId, spanId);
+                    break;
+
+                case "remotedependency":
+                    LogDependencyTelemetryItem(item, traceId, spanId);
+                    break;
+
+                case "message":
+                    LogTraceTelemetryItem(item, traceId, spanId);
+                    break;
+
+                case "exception":
+                    LogExceptionTelemetryItem(item, traceId, spanId);
+                    break;
+
+                case "metric":
+                    //LogMetricTelemetryItem(item, traceId, spanId);
+                    break;
+
+                default:
+                    LogGenericTelemetryItem(item, traceId, spanId);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Logs Request telemetry items (HTTP requests, incoming calls, inbound Service Bus messages)
+        /// </summary>
+        private void LogRequestTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        {
+            try
+            {
+                if (item.Data?.BaseData is RequestData requestData)
+                {
+                    var operationName = requestData.Name ?? "Unknown";
+                    var url = requestData.Url ?? "Unknown";
+                    var httpMethod = ExtractHttpMethod(requestData, item.Tags);
+                    var duration = ParseDuration(requestData.Duration);
+                    var responseCode = ParseResponseCode(requestData.ResponseCode);
+                    var success = requestData.Success;
+
+                    string telemetryDetails = "";
+                    int payloadSize = 0;
+
+                    if (AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled(EventLevel.Verbose,
+                        AzureMonitorDiagnosticsEventSourceData.Keywords.Requests))
+                    {
+                        telemetryDetails = JsonSerializer.Serialize(item);
+                        payloadSize = System.Text.Encoding.UTF8.GetByteCount(telemetryDetails);
+                    }
+
+                    AzureMonitorDiagnosticsEventSourceData.Log.RequestTelemetryProduced(
+                        operationName, httpMethod, url, duration, responseCode, success,
+                        traceId, spanId, "Server", "Azure.Monitor.OpenTelemetry.Exporter",
+                        telemetryDetails, payloadSize);
+                }
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                    "Request", ex.Message, "Request parsing", traceId, spanId);
+            }
+        }
+
+        /// <summary>
+        /// Logs Dependency telemetry items (outgoing HTTP calls, database calls)
+        /// </summary>
+        private void LogDependencyTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        {
+            try
+            {
+                if (item.Data?.BaseData is RemoteDependencyData dependencyData)
+                {
+                    var dependencyName = dependencyData.Name ?? "Unknown";
+                    var dependencyType = dependencyData.Type ?? "Unknown";
+                    var target = dependencyData.Target ?? "Unknown";
+                    var data = dependencyData.Data ?? "";
+                    var duration = ParseDuration(dependencyData.Duration);
+                    var success = dependencyData.Success ?? true;
+                    var resultCode = dependencyData.ResultCode ?? "0";
+
+                    string telemetryDetails = "";
+                    int payloadSize = 0;
+
+                    if (AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled(EventLevel.Verbose,
+                        AzureMonitorDiagnosticsEventSourceData.Keywords.Dependencies))
+                    {
+                        telemetryDetails = JsonSerializer.Serialize(item);
+                        payloadSize = System.Text.Encoding.UTF8.GetByteCount(telemetryDetails);
+                    }
+
+                    AzureMonitorDiagnosticsEventSourceData.Log.DependencyTelemetryProduced(
+                        dependencyName, dependencyType, target, data, duration, success, resultCode,
+                        traceId, spanId, "Client", "Azure.Monitor.OpenTelemetry.Exporter",
+                        telemetryDetails, payloadSize);
+                }
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                    "Dependency", ex.Message, "Dependency parsing", traceId, spanId);
+            }
+        }
+
+        /// <summary>
+        /// Logs Trace/Log telemetry items (ILogger messages, debug traces)
+        /// </summary>
+        private void LogTraceTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        {
+            try
+            {
+                if (item.Data?.BaseData is MessageData messageData)
+                {
+                    var message = messageData.Message ?? "Unknown";
+                    var severity = MapSeverityLevel(messageData.SeverityLevel);
+                    var categoryName = ExtractCategoryName(messageData.Properties);
+
+                    string telemetryDetails = "";
+                    int payloadSize = 0;
+
+                    if (AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled(EventLevel.Verbose,
+                        AzureMonitorDiagnosticsEventSourceData.Keywords.Traces))
+                    {
+                        telemetryDetails = JsonSerializer.Serialize(item);
+                        payloadSize = System.Text.Encoding.UTF8.GetByteCount(telemetryDetails);
+                    }
+
+                    AzureMonitorDiagnosticsEventSourceData.Log.TraceTelemetryProduced(
+                        message, severity, categoryName, traceId, spanId,
+                        "Microsoft.Extensions.Logging", "Azure.Monitor.OpenTelemetry.Exporter",
+                        telemetryDetails, payloadSize);
+                }
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                    "Trace", ex.Message, "Trace parsing", traceId, spanId);
+            }
+        }
+
+        /// <summary>
+        /// Logs Exception telemetry items (unhandled exceptions, error conditions)
+        /// </summary>
+        private void LogExceptionTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        {
+            try
+            {
+                if (item.Data?.BaseData is TelemetryExceptionData exceptionData)
+                {
+                    var firstException = exceptionData.Exceptions?.FirstOrDefault();
+                    if (firstException != null)
+                    {
+                        var exceptionType = firstException.TypeName ?? "Unknown";
+                        var exceptionMessage = firstException.Message ?? "Unknown";
+                        var problemId = exceptionData.ProblemId ?? GenerateProblemId(firstException);
+                        var hasStackTrace = !string.IsNullOrEmpty(firstException.Stack);
+
+                        string telemetryDetails = "";
+                        int payloadSize = 0;
+
+                        if (AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled(EventLevel.Verbose,
+                            AzureMonitorDiagnosticsEventSourceData.Keywords.Exceptions))
+                        {
+                            telemetryDetails = JsonSerializer.Serialize(item);
+                            payloadSize = System.Text.Encoding.UTF8.GetByteCount(telemetryDetails);
+                        }
+
+                        AzureMonitorDiagnosticsEventSourceData.Log.ExceptionTelemetryProduced(
+                            exceptionType, exceptionMessage, problemId, traceId, spanId,
+                            "Azure.Monitor.OpenTelemetry.Exporter", hasStackTrace, telemetryDetails, payloadSize);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                    "Exception", ex.Message, "Exception parsing", traceId, spanId);
+            }
+        }
+
+        ///// <summary>
+        ///// Logs Metric telemetry items (custom metrics, performance counters)
+        ///// </summary>
+        //private void LogMetricTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        //{
+        //    try
+        //    {
+        //        if (item.Data?.BaseData is MetricData metricData)
+        //        {
+        //            var metricName = metricData.Metrics?.FirstOrDefault()?.Name ?? "Unknown";
+        //            var value = metricData.Metrics?.FirstOrDefault()?.Value ?? 0.0;
+
+        //            string telemetryDetails = "";
+        //            int payloadSize = 0;
+
+        //            if (AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled(EventLevel.Verbose,
+        //                AzureMonitorDiagnosticsEventSourceData.Keywords.Metrics))
+        //            {
+        //                telemetryDetails = JsonSerializer.Serialize(item);
+        //                payloadSize = System.Text.Encoding.UTF8.GetByteCount(telemetryDetails);
+        //            }
+
+        //            AzureMonitorDiagnosticsEventSourceData.Log.MetricTelemetryProduced(
+        //                metricName, value, "", "CustomMetric", "Sum", "Counter",
+        //                "Azure.Monitor.OpenTelemetry.Exporter", 1, telemetryDetails, payloadSize);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+        //            "Metric", ex.Message, "Metric parsing", traceId, spanId);
+        //    }
+        //}
+
+        /// <summary>
+        /// Logs unknown/generic telemetry types
+        /// </summary>
+        private void LogGenericTelemetryItem(TelemetryItem item, string traceId, string spanId)
+        {
+            // For unknown telemetry types, log basic info
+            AzureMonitorDiagnosticsEventSourceData.Log.TelemetryProcessingFailed(
+                item.Name ?? "Unknown", "Unknown telemetry type processed",
+                "Generic telemetry", traceId, spanId);
+        }
+
+        // Utility helper methods
+        private string ExtractTraceId(TelemetryItem item)
+        {
+            return item.Tags?.TryGetValue("ai.operation.id", out var traceId) == true ? traceId : "";
+        }
+
+        private string ExtractSpanId(TelemetryItem item)
+        {
+            return item.Tags?.TryGetValue("ai.operation.parentId", out var spanId) == true ? spanId : "";
+        }
+
+        private string ExtractHttpMethod(RequestData requestData, IDictionary<string, string> tags)
+        {
+            if (requestData.Properties?.TryGetValue("httpMethod", out var method) == true)
+                return method;
+
+            // Try to extract from tags
+            if (tags?.TryGetValue("ai.http.method", out var tagMethod) == true)
+                return tagMethod;
+
+            return "Unknown";
+        }
+
+        private double ParseDuration(string duration)
+        {
+            if (string.IsNullOrEmpty(duration))
+                return 0.0;
+
+            if (TimeSpan.TryParse(duration, out var timeSpan))
+                return timeSpan.TotalMilliseconds;
+
+            return 0.0;
+        }
+
+        private int ParseResponseCode(string responseCode)
+        {
+            if (string.IsNullOrEmpty(responseCode))
+                return 200;
+
+            if (int.TryParse(responseCode, out var code))
+                return code;
+
+            return 200;
+        }
+
+        private string MapSeverityLevel(SeverityLevel? severityLevel)
+        {
+            if (severityLevel.HasValue)
+            {
+                if (severityLevel.Value.Equals(SeverityLevel.Verbose))
+                    return "Verbose";
+                if (severityLevel.Value.Equals(SeverityLevel.Information))
+                    return "Information";
+                if (severityLevel.Value.Equals(SeverityLevel.Warning))
+                    return "Warning";
+                if (severityLevel.Value.Equals(SeverityLevel.Error))
+                    return "Error";
+                if (severityLevel.Value.Equals(SeverityLevel.Critical))
+                    return "Critical";
+            }
+            return "Information";
+        }
+
+        private string ExtractCategoryName(IDictionary<string, string> properties)
+        {
+            return properties?.TryGetValue("CategoryName", out var categoryName) == true ? categoryName : "Unknown";
+        }
+
+        private string GenerateProblemId(TelemetryExceptionDetails exception)
+        {
+            var typeName = exception.TypeName ?? "Unknown";
+            if (!string.IsNullOrEmpty(exception.Stack))
+            {
+                var firstLine = exception.Stack.Split('\n').FirstOrDefault()?.Trim();
+                if (!string.IsNullOrEmpty(firstLine))
+                    return $"{typeName} at {firstLine}";
+            }
+            return typeName;
+        }
+
+        private async Task<string> ResolveEndpointIP(string endpoint)
+        {
+            try
+            {
+                var uri = new Uri(endpoint);
+                var addresses = await Dns.GetHostAddressesAsync(uri.Host).ConfigureAwait(false);
+                return addresses.FirstOrDefault()?.ToString() ?? "Unknown";
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
+
+        private string GetEndpointUrl()
+        {
+            // This should return the ingestion endpoint URL like:
+            // "https://dc.services.visualstudio.com/v2.1/track"
+            // You'll need to adapt this based on your actual implementation
+            return _connectionVars.IngestionEndpoint;
+        }
+
+        //private async Task<string> GetResponseBodyAsync(object response)
+        //{
+        //    try
+        //    {
+        //        // This depends on your actual Response type
+        //        // You'll need to adapt this based on how your REST client returns responses
+        //        // Typically something like: return await response.Content.ReadAsStringAsync();
+        //        return response?.ToString() ?? "";
+        //    }
+        //    catch
+        //    {
+        //        return "";
+        //    }
+        //}
+
+        #endregion
 
         protected virtual void Dispose(bool disposing)
         {

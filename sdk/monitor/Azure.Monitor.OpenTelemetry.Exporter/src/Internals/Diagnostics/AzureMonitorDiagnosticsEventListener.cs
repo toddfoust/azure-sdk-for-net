@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -471,8 +472,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             return new DiagnosticLogEntry
             {
-                Timestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
                 ObservedTimestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
+                Timestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
                 InstrumentationScope = eventData.EventSource?.Name ?? "Unknown",
                 EventName = eventData.EventName ?? "UnknownEvent",
                 TraceId = null, // Will be populated by specific events when available
@@ -480,12 +481,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 SeverityText = MapEventLevelToSeverityText(eventData.Level),
                 SeverityNumber = MapEventLevelToSeverityNumber(eventData.Level),
                 Body = FormatEventMessage(eventData),
-                Resource = new Dictionary<string, object>
-                {
-                    ["service.name"] = _processName,
-                    ["service.instance.id"] = $"{_machineName}-{_processId}",
-                    ["agent.version"] = GetAgentVersion()
-                },
+                Resource = CreateLightweightResource(), //OTEL-compliant but lightweight
                 Attributes = CreateAttributes(eventData)
             };
         }
@@ -498,12 +494,54 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             // For non-Azure Monitor events (when IncludeOtelSdkLogs is true), return message as-is
             if (!eventData.EventSource.Name.StartsWith("OpenTelemetry-AzureMonitor-Diagnostics"))
             {
-                return message;
+                return TryFormatMessage(message, eventData.Payload);
             }
 
             // For Azure Monitor events, the message should already be properly formatted
             // since we're using proper string formatting in the EventSource methods
-            return message;
+            return TryFormatMessage(message, eventData.Payload);
+        }
+
+        private string TryFormatMessage(string messageTemplate, IReadOnlyList<object?>? payload)
+        {
+            // If there are no placeholders, return as-is
+            if (!messageTemplate.Contains("{"))
+            {
+                return messageTemplate;
+            }
+
+            // If no payload but template has placeholders, return template (probably an error case)
+            if (payload == null || payload.Count == 0)
+            {
+                return messageTemplate + " [No payload provided for formatting]";
+            }
+
+            try
+            {
+                // Convert payload to object array for string.Format
+                var args = new object[payload.Count];
+
+                // Handle null values and convert all to strings for safer formatting
+                for (int i = 0; i < payload.Count; i++)
+                {
+                    args[i] = payload[i]?.ToString() ?? "null";
+                }
+
+                // Format the message with the payload values
+                return string.Format(messageTemplate, args);
+            }
+            catch (FormatException ex)
+            {
+                // If formatting fails due to mismatched placeholders/parameters
+                // create a fallback message with available data
+                var payloadStr = string.Join(", ", payload.Select((p, i) => $"[{i}]={p ?? "null"}"));
+                return $"{messageTemplate} [Format Error: {ex.Message}. Payload: {payloadStr}]";
+            }
+            catch (Exception ex)
+            {
+                // For any other formatting error, return diagnostic info
+                return $"{messageTemplate} [Unexpected Error: {ex.Message}]";
+            }
         }
 
         private static string MapEventLevelToSeverityText(EventLevel level)
@@ -555,12 +593,29 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             // Add event-specific metadata
             attributes["agent.diag.event.id"] = eventData.EventId;
-            attributes["agent.diag.event.task"] = eventData.Task.ToString();
-            attributes["agent.diag.event.opcode"] = eventData.Opcode.ToString();
+            //attributes["agent.diag.event.task"] = eventData.Task.ToString();
+            //attributes["agent.diag.event.opcode"] = eventData.Opcode.ToString();
 
             return attributes;
         }
 
+        // Lightweight resource for regular log entries (OTEL-compliant)
+        private Dictionary<string, object> CreateLightweightResource()
+        {
+            return new Dictionary<string, object>
+            {
+                ["attributes"] = new Dictionary<string, object>
+                {
+                    ["service.name"] = _processName,
+                    ["service.instance"] = $"{_machineName}",
+                    ["service.pid"] = _processId,
+                    ["agent.version"] = GetAgentVersion(),
+                    ["agent.sdkVersion"] = SdkVersionUtils.s_sdkVersion
+                }
+                // No entities collection for regular entries to keep them lightweight
+                // We could expand to add Otel entities data model like 'cloud', 'service', 'process', 'host' but only for specific events during startup?
+            };
+        }
         private string GetAgentVersion()
         {
             try
