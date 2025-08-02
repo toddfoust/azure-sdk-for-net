@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -110,7 +111,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             try
             {
-                var logEntry = CreateLogEntry(eventData);
+                var logEntry = CreateSelfDiagnosticsLogEntry(eventData);
                 _logQueue.Enqueue(logEntry);
 
                 // Process log queue asynchronously
@@ -160,7 +161,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     // Config file not found, try Profile API (Phase 2 - stub for now)
                     if (_currentLogDirectory != null)
                     {
-                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigFileMissing(Path.Combine(Directory.GetCurrentDirectory(), ConfigFileName));
+                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigFileMissing(Path.Combine(Directory.GetCurrentDirectory(), ConfigFileName), Environment.CurrentManagedThreadId);
                         // TODO: Attempt Profile API call here in Phase 2
                         DisableLogging();
                     }
@@ -199,7 +200,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 {
                     if (_loggingEnabled)
                     {
-                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationLoadFailed(configPath, "Configuration parsing failed");
+                        AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationLoadFailed(configPath, "Configuration parsing failed", Environment.CurrentManagedThreadId);
                         DisableLogging();
                     }
                 }
@@ -209,7 +210,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 Debug.WriteLine($"Configuration check error: {ex}");
                 if (_loggingEnabled)
                 {
-                    AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                    AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
                 }
             }
         }
@@ -244,7 +245,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                AzureMonitorDiagnosticsEventSourceCore.Log.UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -362,7 +363,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed(ex.Message, configPath);
+                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed(ex.Message, configPath, Environment.CurrentManagedThreadId);
                 return false;
             }
         }
@@ -387,7 +388,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed($"LogFilters parsing error: {ex.Message}", config.ConfigSource);
+                AzureMonitorDiagnosticsEventSourceCore.Log.ConfigurationValidationFailed($"LogFilters parsing error: {ex.Message}", config.ConfigSource, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -463,25 +464,37 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         private string GenerateLogFileName()
         {
             return Path.Combine(_currentLogDirectory!,
-                $"agent-diagnostics-{_machineName}-{_processName}-{_processId}-{_currentFileIndex:D2}.json");
+                $"agent-diagnostics.{_machineName}.{_processName}.{_processId}.{_currentFileIndex:D2}.jsonl".ToLowerInvariant());
         }
 
-        private DiagnosticLogEntry CreateLogEntry(EventWrittenEventArgs eventData)
+        private DiagnosticLogEntry CreateSelfDiagnosticsLogEntry(EventWrittenEventArgs eventData)
         {
             var timestamp = DateTime.UtcNow;
+
+            // Extract key fields from inbound the ETW eventData payload if available
+            var traceId = ExtractPayloadValue(eventData, "traceId");
+            var spanId = ExtractPayloadValue(eventData, "spanId");
+            var telemetryTimestamp = ExtractPayloadValue(eventData, "telemetryTimestamp") ??
+                                     timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+            var tidString = ExtractPayloadValue(eventData, "threadId");
+            int? threadId = null;
+            if (!string.IsNullOrEmpty(tidString) && int.TryParse(tidString, out var parsedTid))
+            {
+                threadId = parsedTid;
+            }
 
             return new DiagnosticLogEntry
             {
                 ObservedTimestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
-                Timestamp = timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
+                Timestamp = telemetryTimestamp,
                 InstrumentationScope = eventData.EventSource?.Name ?? "Unknown",
                 EventName = eventData.EventName ?? "UnknownEvent",
-                TraceId = null, // Will be populated by specific events when available
-                SpanId = null,  // Will be populated by specific events when available
+                TraceId = !string.IsNullOrEmpty(traceId) ? traceId : null,
+                SpanId = !string.IsNullOrEmpty(spanId) ? spanId : null,
                 SeverityText = MapEventLevelToSeverityText(eventData.Level),
                 SeverityNumber = MapEventLevelToSeverityNumber(eventData.Level),
                 Body = FormatEventMessage(eventData),
-                Resource = CreateLightweightResource(), //OTEL-compliant but lightweight
+                Resource = CreateLightweightResource(threadId), //OTEL-compliant but lightweight
                 Attributes = CreateAttributes(eventData)
             };
         }
@@ -576,23 +589,77 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         {
             var attributes = new Dictionary<string, object>();
 
+            // Define the telemetry event names we want to process
+            var telemetryEventNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Request",
+                "RemoteDependency",
+                "Message",
+                "Exception",
+                "Metric",
+                "Event",
+                "PageView"
+            };
+
             // Add payload data as attributes
             if (eventData.Payload != null && eventData.PayloadNames != null)
             {
-                for (int i = 0; i < Math.Min(eventData.Payload.Count, eventData.PayloadNames.Count); i++)
+                if (!string.IsNullOrEmpty(eventData.EventName) && telemetryEventNames.Contains(eventData.EventName))
                 {
-                    var key = eventData.PayloadNames[i];
-                    var value = eventData.Payload[i];
+                    string? telemetryDataId = null;
 
-                    if (!string.IsNullOrEmpty(key) && value != null)
+                    for (int i = 0; i < Math.Min(eventData.Payload.Count, eventData.PayloadNames.Count); i++)
                     {
-                        attributes[$"agent.diag.{key}"] = value;
+                        var paramName = eventData.PayloadNames[i];
+                        var paramValue = eventData.Payload[i];
+
+                        // Extract specific telemetry attributes we care about
+                        if (string.Equals(paramName, "telemetryOrigin", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Origin of the telemetry, specific exporter, or loaded from disk?
+                            attributes["agent.diag.telemetry.origin"] = paramValue?.ToString() ?? "Unknown";
+                        }
+                        else if (string.Equals(paramName, "telemetryDataId", StringComparison.OrdinalIgnoreCase))
+                        {
+                            telemetryDataId = paramValue?.ToString();
+
+                            if (!string.IsNullOrEmpty(telemetryDataId))
+                            {
+                                var telemetryItem = TelemetryDataCache.Retrieve(telemetryDataId ?? "0");
+                                if (telemetryItem != null)
+                                {
+                                    // Serialize copy of telemetry record. May need to sanitize this value?
+                                    // Store the actual object - JsonSerializer will handle it as nested JSON
+                                    attributes["agent.diag.telemetry.data"] = telemetryItem;
+                                }
+                            }
+                            //attributes["agent.diag.telemetry.data"] = paramValue?.ToString() ?? "Unknown";
+                        }
+                        else if (string.Equals(paramName, "telemetryType", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // What is the telemetry type?
+                            attributes["agent.diag.telemetry.type"] = paramValue?.ToString() ?? "Unknown";
+                        }
+                    }
+                }
+                else
+                {
+                    // For any events not dumping raw telemetry, just enumerate all the eventData key/value pairs as attributes
+                    for (int i = 0; i < Math.Min(eventData.Payload.Count, eventData.PayloadNames.Count); i++)
+                    {
+                        var key = eventData.PayloadNames[i];
+                        var value = eventData.Payload[i];
+
+                        if (!string.IsNullOrEmpty(key) && value != null)
+                        {
+                            attributes[$"agent.diag.{key}"] = value;
+                        }
                     }
                 }
             }
 
             // Add event-specific metadata
-            attributes["agent.diag.event.id"] = eventData.EventId;
+            //attributes["agent.diag.event.id"] = eventData.EventId;
             //attributes["agent.diag.event.task"] = eventData.Task.ToString();
             //attributes["agent.diag.event.opcode"] = eventData.Opcode.ToString();
 
@@ -600,7 +667,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         }
 
         // Lightweight resource for regular log entries (OTEL-compliant)
-        private Dictionary<string, object> CreateLightweightResource()
+        private Dictionary<string, object> CreateLightweightResource(int? threadId = null)
         {
             return new Dictionary<string, object>
             {
@@ -608,7 +675,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 {
                     ["service.name"] = _processName,
                     ["service.instance"] = $"{_machineName}",
-                    ["service.pid"] = _processId,
+                    ["service.processId"] = _processId,
+                    ["service.threadId"] = threadId ?? 0,
                     ["agent.version"] = GetAgentVersion(),
                     ["agent.sdkVersion"] = SdkVersionUtils.s_sdkVersion
                 }
@@ -616,6 +684,25 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 // We could expand to add Otel entities data model like 'cloud', 'service', 'process', 'host' but only for specific events during startup?
             };
         }
+
+        // Helper method to extract payload values by parameter name
+        private string? ExtractPayloadValue(EventWrittenEventArgs eventData, string parameterName)
+        {
+            if (eventData.PayloadNames == null || eventData.Payload == null)
+                return null;
+
+            // Find the index of the parameter name
+            for (int i = 0; i < eventData.PayloadNames.Count && i < eventData.Payload.Count; i++)
+            {
+                if (string.Equals(eventData.PayloadNames[i], parameterName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return eventData.Payload[i]?.ToString();
+                }
+            }
+
+            return null;
+        }
+
         private string GetAgentVersion()
         {
             try
@@ -665,7 +752,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var jsonText = JsonSerializer.Serialize(entry, new JsonSerializerOptions
                 {
                     WriteIndented = false,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 }) + Environment.NewLine;
 
                 var jsonBytes = Encoding.UTF8.GetBytes(jsonText);

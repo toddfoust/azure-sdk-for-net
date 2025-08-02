@@ -39,11 +39,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// </summary>
         [Event(1, Level = EventLevel.Informational, Message = "Self-diagnostics configuration loaded from {0}")]
         public void SelfDiagnosticsConfigLoaded(string configSource, string configDirectory, string logDirectory,
-            int fileSizeMB, string logLevel, string logFilters, int logLevelDurationSeconds)
+            int fileSizeMB, string logLevel, string logFilters, int logLevelDurationSeconds, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(1, configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds);
+                WriteEvent(1, configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds, threadId);
             }
         }
 
@@ -51,11 +51,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Event #2: Agent attachment status report
         /// </summary>
         [Event(2, Level = EventLevel.Informational, Message = "OpenTelemetry Agent attach status: {0}")]
-        public void AttachStatusReport(string attachStatus, string attachMode, string backoffReason, string interopStatus)
+        public void AttachStatusReport(string attachStatus, string attachMode, string backoffReason, string interopStatus, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(2, attachStatus, attachMode, backoffReason, interopStatus);
+                WriteEvent(2, attachStatus, attachMode, backoffReason, interopStatus, threadId);
             }
         }
 
@@ -64,11 +64,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// </summary>
         [Event(3, Level = EventLevel.Informational, Message = "Resolved IP addresses for Application Insights endpoints")]
         public void EndpointResolutionReport(string ingestionUrl, string ingestionIPs, string liveMetricsUrl, string liveMetricsIPs,
-            string profilerUrl, string profilerIPs, string snapshotDebuggerUrl, string snapshotDebuggerIPs)
+            string profilerUrl, string profilerIPs, string snapshotDebuggerUrl, string snapshotDebuggerIPs, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(3, ingestionUrl, ingestionIPs, liveMetricsUrl, liveMetricsIPs, profilerUrl, profilerIPs, snapshotDebuggerUrl, snapshotDebuggerIPs);
+                WriteEvent(3, ingestionUrl, ingestionIPs, liveMetricsUrl, liveMetricsIPs, profilerUrl, profilerIPs, snapshotDebuggerUrl, snapshotDebuggerIPs, threadId);
             }
         }
 
@@ -80,13 +80,13 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             string processPath, string workingDirectory, string agentDirectory, string instrumentationKey, string connectionString,
             string cloudProvider, string cloudPlatform, string cloudResourceId, string cloudRole, string cloudRoleInstance,
             double cpuUsagePercent, long memoryUsageMB, string samplingType, double samplingRate,
-            string distributedTracingInbound, string distributedTracingOutbound, string customProcessors)
+            string distributedTracingInbound, string distributedTracingOutbound, string customProcessors, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
                 WriteEvent(4, osType, osVersion, machineName, processId, processName, processPath, workingDirectory, agentDirectory,
                     instrumentationKey, connectionString, cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
-                    cpuUsagePercent, memoryUsageMB, samplingType, samplingRate, distributedTracingInbound, distributedTracingOutbound, customProcessors);
+                    cpuUsagePercent, memoryUsageMB, samplingType, samplingRate, distributedTracingInbound, distributedTracingOutbound, customProcessors, threadId);
             }
         }
 
@@ -94,20 +94,20 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Event #5: Self-diagnostics startup completion
         /// </summary>
         [Event(5, Level = EventLevel.Informational, Message = "Azure Monitor .NET OpenTelemetry Distro self-diagnostics started")]
-        public void SelfDiagnosticsStarted()
+        public void SelfDiagnosticsStarted(int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(5);
+                WriteEvent(5, threadId);
             }
         }
 
-        [Event(6, Message = "Persistent storage initialized. Retriable telemetry for Instrumentation Key '{0}' will be stored at: {1}", Level = EventLevel.Informational)]
-        public void InitializedPersistentStorage(string instrumentationKey, string storageDirectory)
+        [Event(6, Message = "Persistent storage is enabled. Retriable telemetry for Instrumentation Key '{0}' will be stored at: {1}", Level = EventLevel.Informational)]
+        public void PersistentStorageEnabled(string instrumentationKey, string storageDirectory, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(6, instrumentationKey, storageDirectory);
+                WriteEvent(6, instrumentationKey, storageDirectory, threadId);
             }
         }
 
@@ -119,11 +119,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when the agent shuts down gracefully.
         /// </summary>
         [Event(10, Level = EventLevel.Informational, Message = "Azure Monitor agent shutting down")]
-        public void AgentShutdown()
+        public void AgentShutdown(int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(10);
+                WriteEvent(10, threadId);
             }
         }
 
@@ -135,11 +135,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs configuration loading errors.
         /// </summary>
         [Event(20, Level = EventLevel.Error, Message = "Failed to load self-diagnostics configuration from {0}: {1}")]
-        public void ConfigurationLoadFailed(string configPath, string errorMessage)
+        public void ConfigurationLoadFailed(string configPath, string errorMessage, int threadId)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
             {
-                WriteEvent(20, configPath, errorMessage);
+                WriteEvent(20, configPath, errorMessage, threadId);
             }
         }
 
@@ -147,11 +147,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs configuration validation errors.
         /// </summary>
         [Event(21, Level = EventLevel.Error, Message = "Self-diagnostics configuration validation failed: {0}")]
-        public void ConfigurationValidationFailed(string validationError, string configSource)
+        public void ConfigurationValidationFailed(string validationError, string configSource, int threadId)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
             {
-                WriteEvent(21, validationError, configSource);
+                WriteEvent(21, validationError, configSource, threadId);
             }
         }
 
@@ -159,11 +159,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when connection string is parsed and validated.
         /// </summary>
         [Event(22, Level = EventLevel.Informational, Message = "Connection string parsed successfully. Endpoint: {0}, Authentication: {1}")]
-        public void ConnectionStringParsed(string endpoint, string authType, string instrumentationKey)
+        public void ConnectionStringParsed(string endpoint, string authType, string instrumentationKey, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(22, endpoint, authType, instrumentationKey);
+                WriteEvent(22, endpoint, authType, instrumentationKey, threadId);
             }
         }
 
@@ -171,11 +171,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when self-diagnostics config file is missing.
         /// </summary>
         [Event(23, Level = EventLevel.Warning, Message = "Self-diagnostics config file not found at {0}. Attempting Profile API fallback")]
-        public void ConfigFileMissing(string configPath)
+        public void ConfigFileMissing(string configPath, int threadId)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
             {
-                WriteEvent(23, configPath);
+                WriteEvent(23, configPath, threadId);
             }
         }
 
@@ -187,11 +187,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs DNS resolution failures.
         /// </summary>
         [Event(30, Level = EventLevel.Warning, Message = "DNS resolution failed for {0}: {1}")]
-        public void DnsResolutionFailed(string hostname, string errorMessage)
+        public void DnsResolutionFailed(string hostname, string errorMessage, int threadId)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
             {
-                WriteEvent(30, hostname, errorMessage);
+                WriteEvent(30, hostname, errorMessage, threadId);
             }
         }
 
@@ -203,11 +203,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs successful Profile API calls.
         /// </summary>
         [Event(40, Level = EventLevel.Informational, Message = "Profile API call successful. Endpoint: {0}, Duration: {1}ms")]
-        public void ProfileApiSuccess(string endpoint, int durationMs, string responseSize)
+        public void ProfileApiSuccess(string endpoint, int durationMs, string responseSize, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(40, endpoint, durationMs, responseSize);
+                WriteEvent(40, endpoint, durationMs, responseSize, threadId);
             }
         }
 
@@ -215,11 +215,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Profile API call failures.
         /// </summary>
         [Event(41, Level = EventLevel.Warning, Message = "Profile API call failed. Endpoint: {0}, Error: {1}. Falling back to local configuration")]
-        public void ProfileApiFailed(string endpoint, string errorMessage, int statusCode)
+        public void ProfileApiFailed(string endpoint, string errorMessage, int statusCode, int threadId)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
             {
-                WriteEvent(41, endpoint, errorMessage, statusCode);
+                WriteEvent(41, endpoint, errorMessage, statusCode, threadId);
             }
         }
 
@@ -231,11 +231,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs unhandled exceptions in the agent.
         /// </summary>
         [Event(50, Level = EventLevel.Error, Message = "Unhandled exception in agent: {0} - {1}")]
-        public void UnhandledException(string exceptionType, string exceptionMessage, string stackTrace)
+        public void UnhandledException(string exceptionType, string exceptionMessage, string stackTrace, int threadId)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
             {
-                WriteEvent(50, exceptionType, exceptionMessage, stackTrace);
+                WriteEvent(50, exceptionType, exceptionMessage, stackTrace, threadId);
             }
         }
 
@@ -267,11 +267,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 EmitEnvironmentDetails(connectionString ?? string.Empty);
 
                 // Event #5: Started
-                SelfDiagnosticsStarted();
+                SelfDiagnosticsStarted(Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
-                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -286,7 +286,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             var logFilters = SerializeLogFilters(config.LogFilters);
             var logLevelDurationSeconds = config.LogLevelDurationSeconds;
 
-            SelfDiagnosticsConfigLoaded(configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds);
+            SelfDiagnosticsConfigLoaded(configSource, configDirectory, logDirectory, fileSizeMB, logLevel, logFilters, logLevelDurationSeconds, Environment.CurrentManagedThreadId);
         }
 
         [NonEvent]
@@ -303,7 +303,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             // - Interop settings
             // - Other backoff conditions
 
-            AttachStatusReport(attachStatus, attachMode, backoffReason, interopStatus);
+            AttachStatusReport(attachStatus, attachMode, backoffReason, interopStatus, Environment.CurrentManagedThreadId);
         }
 
         [NonEvent]
@@ -322,11 +322,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     endpoints.IngestionEndpoint, string.Join(", ", ingestionIPs),
                     endpoints.LiveMetricsEndpoint, string.Join(", ", liveMetricsIPs),
                     endpoints.ProfilerEndpoint, string.Join(", ", profilerIPs),
-                    endpoints.SnapshotDebuggerEndpoint, string.Join(", ", snapshotDebuggerIPs));
+                    endpoints.SnapshotDebuggerEndpoint, string.Join(", ", snapshotDebuggerIPs), Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
-                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -369,11 +369,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     workingDirectory, agentDirectory, instrumentationKey, maskedConnectionString,
                     cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
                     cpuUsage, memoryUsage, samplingType, samplingRate,
-                    distributedTracingInbound, distributedTracingOutbound, customProcessors);
+                    distributedTracingInbound, distributedTracingOutbound, customProcessors, Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
-                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                UnhandledException(ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -438,7 +438,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                UnhandledException("ConnectionStringParsing", ex.Message, ex.StackTrace ?? string.Empty);
+                UnhandledException("ConnectionStringParsing", ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
 
             return defaults;
@@ -471,7 +471,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                UnhandledException("ConnectionStringParsing", ex.Message, ex.StackTrace ?? string.Empty);
+                UnhandledException("ConnectionStringParsing", ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
 
             return info;
@@ -494,7 +494,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                DnsResolutionFailed(url, ex.Message);
+                DnsResolutionFailed(url, ex.Message, Environment.CurrentManagedThreadId);
                 return new[] { "Resolution failed" };
             }
         }

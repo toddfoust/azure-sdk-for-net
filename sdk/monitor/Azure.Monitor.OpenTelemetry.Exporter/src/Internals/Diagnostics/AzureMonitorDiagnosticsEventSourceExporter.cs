@@ -33,7 +33,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when telemetry transmission is attempted (Pillar 2: Transmission).
         /// This is the "shipping manifest" for telemetry batches.
         /// </summary>
-        [Event(1, Level = EventLevel.Informational, Message = "Transmission attempt started. Endpoint: {endpoint}, Batch size: {batchSize} items")]
+        [Event(1, Level = EventLevel.Informational, Message = "Transmission attempt started. Endpoint: {0}, Batch size: {2} items")]
         public void TransmissionAttemptStarted(string endpoint, string resolvedIP, int batchSize, int payloadSizeBytes)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -58,7 +58,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs transmission retry attempts.
         /// </summary>
-        [Event(3, Level = EventLevel.Warning, Message = "Transmission retry attempt. Retry: {retryCount}, Delay: {delayMs}ms")]
+        [Event(3, Level = EventLevel.Warning, Message = "Transmission retry attempt. Retry: {0}, Delay: {1}ms")]
         public void TransmissionRetryAttempt(int retryCount, int delayMs, string endpoint, string reason)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -70,7 +70,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when transmission fails before getting a response.
         /// </summary>
-        [Event(4, Level = EventLevel.Error, Message = "Transmission failed. Endpoint: {endpoint}, Error: {errorMessage}")]
+        [Event(4, Level = EventLevel.Error, Message = "Transmission failed. Endpoint: {0}, Error: {1}")]
         public void TransmissionFailed(string endpoint, string errorMessage, string exceptionType, int attemptDurationMs)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -82,7 +82,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs HTTP request details for transmission.
         /// </summary>
-        [Event(5, Level = EventLevel.Verbose, Message = "HTTP request prepared. Method: {httpMethod}, Content-Type: {contentType}")]
+        [Event(5, Level = EventLevel.Verbose, Message = "HTTP request prepared. Method: {0}, Content-Type: {1}")]
         public void HttpRequestPrepared(string httpMethod, string contentType, string endpoint, int contentLength)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -99,7 +99,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs backend response for transmission (Pillar 3: Response).
         /// This is the "delivery receipt" for telemetry transmission.
         /// </summary>
-        [Event(10, Level = EventLevel.Informational, Message = "Backend response received. Status: {statusCode}, Duration: {durationMs}ms")]
+        [Event(10, Level = EventLevel.Informational, Message = "Backend response received. Status: {0}, Duration: {1}ms")]
         public void BackendResponseReceived(int statusCode, int durationMs, string endpoint, string responseBody)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -111,7 +111,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs successful backend responses with acceptance details.
         /// </summary>
-        [Event(11, Level = EventLevel.Informational, Message = "Backend accepted telemetry. Received: {itemsReceived}, Accepted: {itemsAccepted}")]
+        [Event(11, Level = EventLevel.Informational, Message = "Backend accepted telemetry. Received: {0}, Accepted: {1}")]
         public void BackendAcceptedTelemetry(int itemsReceived, int itemsAccepted, int itemsRejected, string endpoint)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -123,7 +123,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs backend error responses.
         /// </summary>
-        [Event(12, Level = EventLevel.Error, Message = "Backend error response. Status: {statusCode}, Error: {errorMessage}")]
+        [Event(12, Level = EventLevel.Error, Message = "Backend error response. Status: {0}, Error: {1}")]
         public void BackendErrorResponse(int statusCode, string errorMessage, string endpoint, string responseBody)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -135,7 +135,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs backend throttling responses.
         /// </summary>
-        [Event(13, Level = EventLevel.Warning, Message = "Backend throttling response. Status: {statusCode}, Retry-After: {retryAfterMs}ms")]
+        [Event(13, Level = EventLevel.Warning, Message = "Backend throttling response. Status: {0}, Retry-After: {1}ms")]
         public void BackendThrottlingResponse(int statusCode, int retryAfterMs, string endpoint, string reason)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -147,7 +147,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs backend partial success responses where some items were rejected.
         /// </summary>
-        [Event(14, Level = EventLevel.Warning, Message = "Backend partial success. Accepted: {itemsAccepted}, Rejected: {itemsRejected}")]
+        [Event(14, Level = EventLevel.Warning, Message = "Backend partial success. Accepted: {0}, Rejected: {1}")]
         public void BackendPartialSuccess(int itemsAccepted, int itemsRejected, string endpoint, string rejectionReasons)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -163,7 +163,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs telemetry buffer operations.
         /// </summary>
-        [Event(20, Level = EventLevel.Verbose, Message = "Buffer operation. Action: {action}, Buffer size: {bufferSize}, Queue depth: {queueDepth}")]
+        [Event(20, Level = EventLevel.Verbose, Message = "Buffer operation. Action: {0}, Buffer size: {1}, Queue depth: {2}")]
         public void BufferOperation(string action, int bufferSize, int queueDepth, int maxCapacity)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -175,7 +175,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when buffer reaches capacity limits.
         /// </summary>
-        [Event(21, Level = EventLevel.Warning, Message = "Buffer capacity warning. Current: {currentSize}, Max: {maxSize}, Action: {action}")]
+        [Event(21, Level = EventLevel.Warning, Message = "Buffer capacity warning. Current: {0}, Max: {1}, Action: {2}")]
         public void BufferCapacityWarning(int currentSize, int maxSize, string action)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -187,7 +187,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs telemetry persistence to disk.
         /// </summary>
-        [Event(22, Level = EventLevel.Informational, Message = "Telemetry persisted to disk. File: {fileName}, Items: {itemCount}")]
+        [Event(22, Level = EventLevel.Informational, Message = "Telemetry persisted to disk. File: {0}, Items: {1}")]
         public void TelemetryPersistedToDisk(string fileName, int itemCount, long fileSizeBytes, string storagePath)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -199,7 +199,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs telemetry restoration from disk.
         /// </summary>
-        [Event(23, Level = EventLevel.Informational, Message = "Telemetry restored from disk. File: {fileName}, Items: {itemCount}")]
+        [Event(23, Level = EventLevel.Informational, Message = "Telemetry restored from disk. File: {0}, Items: {1}")]
         public void TelemetryRestoredFromDisk(string fileName, int itemCount, long fileSizeBytes)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
@@ -211,7 +211,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when offline storage fails.
         /// </summary>
-        [Event(24, Level = EventLevel.Error, Message = "Offline storage failed. Path: {storagePath}, Error: {errorMessage}")]
+        [Event(24, Level = EventLevel.Error, Message = "Offline storage failed. Path: {0}, Error: {1}, Items Lost: {2}")]
         public void OfflineStorageFailed(string storagePath, string errorMessage, int itemsLost)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -227,7 +227,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when export batch is being prepared.
         /// </summary>
-        [Event(30, Level = EventLevel.Verbose, Message = "Export batch preparation started. Items: {itemCount}")]
+        [Event(30, Level = EventLevel.Verbose, Message = "Export batch preparation started. Items: {0}")]
         public void ExportBatchPreparationStarted(int itemCount, string exporterType)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -239,7 +239,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when export batch preparation completes.
         /// </summary>
-        [Event(31, Level = EventLevel.Verbose, Message = "Export batch preparation completed. Serialized size: {serializedSizeBytes}")]
+        [Event(31, Level = EventLevel.Verbose, Message = "Export batch preparation completed. Serialized size: {0}")]
         public void ExportBatchPreparationCompleted(int serializedSizeBytes, int processingDurationMs)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -251,7 +251,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when export batch processing fails.
         /// </summary>
-        [Event(32, Level = EventLevel.Error, Message = "Export batch processing failed. Error: {errorMessage}")]
+        [Event(32, Level = EventLevel.Error, Message = "Export batch processing failed. Error: {0}")]
         public void ExportBatchProcessingFailed(string errorMessage, int itemCount, string processingStage)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -267,7 +267,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs connection establishment attempts.
         /// </summary>
-        [Event(40, Level = EventLevel.Verbose, Message = "Connection attempt to {endpoint}")]
+        [Event(40, Level = EventLevel.Verbose, Message = "Connection attempt to {0}")]
         public void ConnectionAttempt(string endpoint, string resolvedIP, int timeoutMs)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -279,7 +279,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs connection establishment results.
         /// </summary>
-        [Event(41, Level = EventLevel.Verbose, Message = "Connection established to {endpoint}, Duration: {durationMs}ms")]
+        [Event(41, Level = EventLevel.Verbose, Message = "Connection established to {0}, Duration: {1}ms")]
         public void ConnectionEstablished(string endpoint, int durationMs, string protocol)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -291,7 +291,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs connection failures.
         /// </summary>
-        [Event(42, Level = EventLevel.Warning, Message = "Connection failed to {endpoint}. Error: {errorMessage}")]
+        [Event(42, Level = EventLevel.Warning, Message = "Connection failed to {0}. Error: {1}")]
         public void ConnectionFailed(string endpoint, string errorMessage, int attemptDurationMs)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
@@ -307,7 +307,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs exporter exceptions.
         /// </summary>
-        [Event(50, Level = EventLevel.Error, Message = "Exporter exception. Component: {component}, Error: {errorMessage}")]
+        [Event(50, Level = EventLevel.Error, Message = "Exporter exception. Component: {0}, Error type: {1}, Error message: {2}")]
         public void ExporterException(string component, string errorType, string errorMessage, string stackTrace)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
@@ -319,7 +319,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// <summary>
         /// Logs when export is cancelled or times out.
         /// </summary>
-        [Event(51, Level = EventLevel.Warning, Message = "Export cancelled. Reason: {reason}, Items lost: {itemsLost}")]
+        [Event(51, Level = EventLevel.Warning, Message = "Export cancelled. Reason: {0}, Items lost: {1}")]
         public void ExportCancelled(string reason, int itemsLost, int timeoutMs)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))

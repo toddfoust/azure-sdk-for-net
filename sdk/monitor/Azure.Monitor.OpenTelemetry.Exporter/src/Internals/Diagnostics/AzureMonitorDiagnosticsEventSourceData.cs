@@ -68,17 +68,18 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Request telemetry production with level-appropriate detail (will appear in AppRequests table)
         /// </summary>
         [Event(1, Level = EventLevel.Informational, Keywords = Keywords.Requests,
-               Message = "Request telemetry produced: {0} ({1} {2})")]
-        public void RequestTelemetryProduced(string operationName, string httpMethod, string url,
+               Message = "Request telemetry queued for transmission")]
+        public void Request(string operationName, string httpMethod, string url,
             double durationMs, int responseCode, bool success, string traceId, string spanId,
-            string activityKind, string instrumentationLibrary, string telemetryDetails, int payloadSizeBytes)
+            string activityKind, string instrumentationLibrary, string telemetryOrigin,
+            int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.Requests))
             {
                 WriteEvent(1, operationName ?? "Unknown", httpMethod ?? "Unknown", url ?? "Unknown",
                     durationMs, responseCode, success, traceId ?? "", spanId ?? "",
                     activityKind ?? "Unknown", instrumentationLibrary ?? "Unknown",
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
@@ -86,34 +87,35 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Dependency telemetry production with level-appropriate detail (will appear in AppDependencies table)
         /// </summary>
         [Event(2, Level = EventLevel.Informational, Keywords = Keywords.Dependencies,
-               Message = "Dependency telemetry produced: {0} ({1} -> {2})")]
-        public void DependencyTelemetryProduced(string dependencyName, string dependencyType, string target,
+               Message = "Dependency telemetry queued for transmission")]
+        public void RemoteDependency(string dependencyName, string dependencyType, string target,
             string data, double durationMs, bool success, string resultCode, string traceId, string spanId,
-            string activityKind, string instrumentationLibrary, string telemetryDetails, int payloadSizeBytes)
+            string activityKind, string instrumentationLibrary, string telemetryOrigin,
+            int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.Dependencies))
             {
                 WriteEvent(2, dependencyName ?? "Unknown", dependencyType ?? "Unknown", target ?? "Unknown",
                     data ?? "", durationMs, success, resultCode ?? "", traceId ?? "", spanId ?? "",
                     activityKind ?? "Unknown", instrumentationLibrary ?? "Unknown",
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
         /// <summary>
-        /// Logs Trace/Message telemetry production with level-appropriate detail (will appear in AppTraces table)
+        /// Logs Trace/Message telemetry production with level-appropriate detail
         /// </summary>
         [Event(3, Level = EventLevel.Informational, Keywords = Keywords.Traces,
-               Message = "Trace telemetry produced: {0} (Level: {1})")]
-        public void TraceTelemetryProduced(string message, string severityLevel, string categoryName,
+               Message = "Trace telemetry queued for transmission")]
+        public void Message(string message, string severityLevel, string categoryName,
             string traceId, string spanId, string loggerProvider, string instrumentationLibrary,
-            string telemetryDetails, int payloadSizeBytes)
+            string telemetryOrigin, int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.Traces))
             {
                 WriteEvent(3, message ?? "Unknown", severityLevel ?? "Unknown", categoryName ?? "Unknown",
                     traceId ?? "", spanId ?? "", loggerProvider ?? "Unknown", instrumentationLibrary ?? "Unknown",
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
@@ -121,16 +123,16 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Exception telemetry production with level-appropriate detail (will appear in AppExceptions table)
         /// </summary>
         [Event(4, Level = EventLevel.Error, Keywords = Keywords.Exceptions,
-               Message = "Exception telemetry produced: {0} - {1}")]
-        public void ExceptionTelemetryProduced(string exceptionType, string exceptionMessage, string problemId,
-            string traceId, string spanId, string instrumentationLibrary, bool hasStackTrace, string telemetryDetails,
-            int payloadSizeBytes)
+               Message = "Exception telemetry queued for transmission")]
+        public void Exception(string exceptionType, string exceptionMessage, string problemId,
+            string traceId, string spanId, string instrumentationLibrary, bool hasStackTrace, string telemetryOrigin,
+            int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Error, Keywords.Exceptions))
             {
                 WriteEvent(4, exceptionType ?? "Unknown", exceptionMessage ?? "Unknown", problemId ?? "Unknown",
                     traceId ?? "", spanId ?? "", instrumentationLibrary ?? "Unknown", hasStackTrace,
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
@@ -138,16 +140,16 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Metric telemetry production with level-appropriate detail (will appear in customMetrics table)
         /// </summary>
         [Event(5, Level = EventLevel.Informational, Keywords = Keywords.Metrics,
-               Message = "Metric telemetry produced: {0} = {1} {2} (Type: {3})")]
-        public void MetricTelemetryProduced(string metricName, double value, string unit, string metricType,
+               Message = "Metric telemetry queued for transmission")]
+        public void Metric(string metricName, double value, string unit, string metricType,
             string aggregationType, string instrumentType, string instrumentationLibrary, int dataPointCount,
-            string telemetryDetails, int payloadSizeBytes)
+            string telemetryOrigin, int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.Metrics))
             {
                 WriteEvent(5, metricName ?? "Unknown", value, unit ?? "", metricType ?? "Unknown",
                     aggregationType ?? "Unknown", instrumentType ?? "Unknown", instrumentationLibrary ?? "Unknown",
-                    dataPointCount, telemetryDetails ?? "", payloadSizeBytes);
+                    dataPointCount, telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId, threadId);
             }
         }
 
@@ -155,33 +157,33 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs Custom Event telemetry production with level-appropriate detail (will appear in customEvents table)
         /// </summary>
         [Event(6, Level = EventLevel.Informational, Keywords = Keywords.Events,
-               Message = "Custom Event telemetry produced: {0}")]
-        public void EventTelemetryProduced(string eventName, string traceId, string spanId,
+               Message = "Custom Event telemetry queued for transmission")]
+        public void Event(string eventName, string traceId, string spanId,
             string instrumentationLibrary, int propertiesCount, int measurementsCount,
-            string telemetryDetails, int payloadSizeBytes)
+            string telemetryOrigin, int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.Events))
             {
                 WriteEvent(6, eventName ?? "Unknown", traceId ?? "", spanId ?? "",
                     instrumentationLibrary ?? "Unknown", propertiesCount, measurementsCount,
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
         /// <summary>
-        /// Logs PageView telemetry production with level-appropriate detail (will appear in AppPageViews table)
+        /// Logs PageView telemetry production with level-appropriate detail
         /// </summary>
         [Event(7, Level = EventLevel.Informational, Keywords = Keywords.PageViews,
-               Message = "PageView telemetry produced: {0} ({1})")]
-        public void PageViewTelemetryProduced(string pageName, string url, double durationMs,
+               Message = "PageView telemetry queued for transmission")]
+        public void PageView(string pageName, string url, double durationMs,
             string traceId, string spanId, string instrumentationLibrary,
-            string telemetryDetails, int payloadSizeBytes)
+            string telemetryOrigin, int payloadSizeBytes, string telemetryTimestamp, string telemetryDataId, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, Keywords.PageViews))
             {
                 WriteEvent(7, pageName ?? "Unknown", url ?? "Unknown", durationMs,
                     traceId ?? "", spanId ?? "", instrumentationLibrary ?? "Unknown",
-                    telemetryDetails ?? "", payloadSizeBytes);
+                    telemetryOrigin, payloadSizeBytes, telemetryTimestamp, telemetryDataId ?? "", threadId);
             }
         }
 
@@ -258,9 +260,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
 
-                RequestTelemetryProduced(operationName, httpMethod, url, durationMs, responseCode, success,
+                Request(operationName, httpMethod, url, durationMs, responseCode, success,
                     traceId, spanId, activity.Kind.ToString(),
-                    instrumentationLibrary ?? "Unknown", telemetryDetails, payloadSize);
+                    instrumentationLibrary ?? "Unknown", "unknown", payloadSize,
+                    DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"), telemetryDetails,
+                    Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
@@ -304,9 +308,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
 
-                DependencyTelemetryProduced(dependencyName, dependencyType, target, data, durationMs, success,
+                RemoteDependency(dependencyName, dependencyType, target, data, durationMs, success,
                     resultCode, traceId, spanId, activity.Kind.ToString(),
-                    instrumentationLibrary ?? "Unknown", telemetryDetails, payloadSize);
+                    instrumentationLibrary ?? "Unknown", "unknown", payloadSize,
+                    DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"), telemetryDetails,
+                    Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
@@ -346,10 +352,15 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     telemetryDetails = SerializeObjectToJson(logRecord);
                     payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
+                else
+                {
+                    telemetryDetails = "Enable verbose logging in OTEL_DIAGNOSTICS.json to view full telemetry payloads.";
+                }
 
-                TraceTelemetryProduced(body, severityLevel, categoryName, traceId, spanId,
+                // TODO: How do we extract timestamp from otel LogRecord? Populating with UtcNow for now.
+                Message(body, severityLevel, categoryName, traceId, spanId,
                     "Microsoft.Extensions.Logging", instrumentationLibrary ?? "Unknown",
-                    telemetryDetails, payloadSize);
+                    "unknown", payloadSize, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"), telemetryDetails, Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
@@ -395,9 +406,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
 
-                ExceptionTelemetryProduced(exceptionType, exceptionMessage, problemId,
+                Exception(exceptionType, exceptionMessage, problemId,
                     traceId, spanId, instrumentationLibrary ?? "Unknown", hasStackTrace,
-                    telemetryDetails, payloadSize);
+                    "unknown", payloadSize, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"), telemetryDetails, Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
@@ -435,8 +446,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     payloadSize = Encoding.UTF8.GetByteCount(telemetryDetails);
                 }
 
-                MetricTelemetryProduced(metricName, value, unit, metricType, "Sum", "Counter",
-                    instrumentationLibrary ?? "Unknown", 1, telemetryDetails, payloadSize);
+                Metric(metricName, value, unit, metricType, "Sum", "Counter",
+                    instrumentationLibrary ?? "Unknown", 1, "unknown", payloadSize, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"), telemetryDetails, Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
