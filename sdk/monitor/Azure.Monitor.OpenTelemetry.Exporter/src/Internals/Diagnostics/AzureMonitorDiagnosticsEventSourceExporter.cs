@@ -8,6 +8,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 {
@@ -34,24 +35,26 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// This is the "shipping manifest" for telemetry batches.
         /// </summary>
         [Event(1, Level = EventLevel.Informational, Message = "Transmission attempt started. Endpoint: {0}, Batch size: {2} items")]
-        public void TransmissionAttemptStarted(string endpoint, string resolvedIP, int batchSize, int payloadSizeBytes)
+        public void TransmissionAttempt(string endpoint, string resolvedIP, int batchSize,
+            string batchComposition, int requestCount, int dependencyCount, int traceCount,
+            int metricCount, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(1, endpoint, resolvedIP, batchSize, payloadSizeBytes);
+                WriteEvent(1, endpoint, resolvedIP, batchSize, batchComposition, requestCount, dependencyCount, traceCount, metricCount, threadId);
             }
         }
 
         /// <summary>
         /// Logs detailed transmission attempt with batch composition.
         /// </summary>
-        [Event(2, Level = EventLevel.Verbose, Message = "Transmission batch details")]
+        [Event(2, Level = EventLevel.Informational, Message = "Transmission batch details")]
         public void TransmissionBatchDetails(string endpoint, string batchComposition,
-            int requestCount, int dependencyCount, int traceCount, int metricCount)
+            int requestCount, int dependencyCount, int traceCount, int metricCount, int threadId)
         {
-            if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
+            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(2, endpoint, batchComposition, requestCount, dependencyCount, traceCount, metricCount);
+                WriteEvent(2, endpoint, batchComposition, requestCount, dependencyCount, traceCount, metricCount, threadId);
             }
         }
 
@@ -91,6 +94,19 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
+        /// <summary>
+        /// Logs when telemetry transmission is attempted, however these telemetry items were loaded from persistent storage, not JUST produced by currently running app (Pillar 2: Transmission).
+        /// This is the "shipping manifest" for telemetry batches.
+        /// </summary>
+        [Event(6, Level = EventLevel.Informational, Message = "Transmission of telemetry loaded from storage attempt started.")]
+        public void TransmissionFromStorageAttempt(string body)
+        {
+            if (IsEnabled(EventLevel.Informational, EventKeywords.None))
+            {
+                WriteEvent(6, body);
+            }
+        }
+
         #endregion
 
         #region Pillar 3: Backend Response Events
@@ -100,11 +116,12 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// This is the "delivery receipt" for telemetry transmission.
         /// </summary>
         [Event(10, Level = EventLevel.Informational, Message = "Backend response received. Status: {0}, Duration: {1}ms")]
-        public void BackendResponseReceived(int statusCode, int durationMs, string endpoint, string responseBody)
+        public void BackendResponseReceived(int statusCode, int durationMs, string endpoint,
+            string telemetrySent, string requestId, string responseBody, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
-                WriteEvent(10, statusCode, durationMs, endpoint, responseBody);
+                WriteEvent(10, statusCode, durationMs, endpoint ?? "Unknown", telemetrySent ?? "Unknown", requestId ?? "Unknown", responseBody ?? "null", threadId);
             }
         }
 
@@ -220,14 +237,44 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-        #endregion
-
-        #region Export Processing Events
+        /// <summary>
+        /// Logs when the exporter enables backoff mode due to retryable responses from ingestion endpoint
+        /// </summary>
+        [Event(25, Level = EventLevel.Warning, Message = "Transmission temporarily deferred")]
+        public void TransmissionBackoffEnabled(int statusCode, string reasonPhrase, string backoffDurationDescription,
+            double backoffDurationMs, bool persistentStorageEnabled, string endpoint, string localStorageFolderPath, string? statusDetails)
+        {
+            if (IsEnabled(EventLevel.Warning, EventKeywords.None))
+            {
+                statusDetails = $"The SDK attempted to send telemetry to the Application Insights ingestion endpoint but encountered a failure or received a retry response. Status: {statusCode} {reasonPhrase}. Retry scheduled after: {backoffDurationDescription}. New telemetry will be saved locally and retried once connectivity is restored. Telemetry files stored in: {localStorageFolderPath}";
+                WriteEvent(25, statusCode, reasonPhrase ?? "Unknown", backoffDurationDescription ?? "Unknown",
+                    backoffDurationMs, persistentStorageEnabled, endpoint ?? "Unknown", statusDetails ?? "Unknown");
+            }
+        }
 
         /// <summary>
-        /// Logs when export batch is being prepared.
+        /// Logs when ingestion returns non-retriable response, or retriable response but customer has local cache disabled and data is lost/dropped.
         /// </summary>
-        [Event(30, Level = EventLevel.Verbose, Message = "Export batch preparation started. Items: {0}")]
+        [Event(26, Level = EventLevel.Error, Message = "Transmission failed")]
+        public void TelemetryDropped(int statusCode, string reasonPhrase, string backoffDurationDescription,
+            double backoffDurationMs, bool persistentStorageEnabled, string endpoint, string statusDetails)
+        {
+            if (IsEnabled(EventLevel.Error, EventKeywords.None))
+            {
+                statusDetails = $"The SDK attempted to send telemetry to the Application Insights ingestion endpoint but encountered a failure or received a retry response. Status:{statusCode} {reasonPhrase}. Retry scheduled after:{backoffDurationDescription} Note: Offline storage is not enabled, so telemetry generated during this backoff period will not be retained and will be permanently dropped.";
+                WriteEvent(26, statusCode, reasonPhrase ?? "Unknown", backoffDurationDescription ?? "Unknown",
+                    backoffDurationMs, persistentStorageEnabled, endpoint ?? "Unknown", statusDetails ?? "Unknown");
+            }
+        }
+
+#endregion
+
+#region Export Processing Events
+
+/// <summary>
+/// Logs when export batch is being prepared.
+/// </summary>
+[Event(30, Level = EventLevel.Verbose, Message = "Export batch preparation started. Items: {0}")]
         public void ExportBatchPreparationStarted(int itemCount, string exporterType)
         {
             if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
@@ -308,11 +355,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs exporter exceptions.
         /// </summary>
         [Event(50, Level = EventLevel.Error, Message = "Exporter exception. Component: {0}, Error type: {1}, Error message: {2}")]
-        public void ExporterException(string component, string errorType, string errorMessage, string stackTrace)
+        public void ExporterException(string component, string errorType, string errorMessage, string stackTrace, int threadId)
         {
             if (IsEnabled(EventLevel.Error, EventKeywords.None))
             {
-                WriteEvent(50, component, errorType, errorMessage, stackTrace);
+                WriteEvent(50, component, errorType, errorMessage, stackTrace, threadId);
             }
         }
 
@@ -320,11 +367,11 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         /// Logs when export is cancelled or times out.
         /// </summary>
         [Event(51, Level = EventLevel.Warning, Message = "Export cancelled. Reason: {0}, Items lost: {1}")]
-        public void ExportCancelled(string reason, int itemsLost, int timeoutMs)
+        public void ExportCancelled(string reason, int itemsLost, int timeoutMs, int threadId)
         {
             if (IsEnabled(EventLevel.Warning, EventKeywords.None))
             {
-                WriteEvent(51, reason, itemsLost, timeoutMs);
+                WriteEvent(51, reason, itemsLost, timeoutMs, threadId);
             }
         }
 
@@ -346,23 +393,86 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             {
                 var batchList = telemetryBatch.ToList();
                 var batchSize = batchList.Count;
-                var payloadSize = EstimatePayloadSize(batchList);
+                //var payloadSize = EstimatePayloadSize(batchList);
+                var composition = AnalyzeBatchComposition(batchList);
 
-                TransmissionAttemptStarted(endpoint, resolvedIP, batchSize, payloadSize);
+                TransmissionAttempt(endpoint, resolvedIP, batchSize, composition.Summary,
+                    composition.RequestCount, composition.DependencyCount, composition.TraceCount,
+                    composition.MetricCount, Environment.CurrentManagedThreadId);
 
-                // Log batch composition if verbose logging is enabled
-                if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
-                {
-                    var composition = AnalyzeBatchComposition(batchList);
-                    TransmissionBatchDetails(endpoint, composition.Summary,
-                        composition.RequestCount, composition.DependencyCount,
-                        composition.TraceCount, composition.MetricCount);
-                }
+                //// Log batch composition if verbose logging is enabled
+                //if (IsEnabled(EventLevel.Verbose, EventKeywords.None))
+                //{
+                //    var composition = AnalyzeBatchComposition(batchList);
+                //    TransmissionBatchDetails(endpoint, composition.Summary,
+                //        composition.RequestCount, composition.DependencyCount,
+                //        composition.TraceCount, composition.MetricCount, Environment.CurrentManagedThreadId);
+                //}
             }
             catch (Exception ex)
             {
-                ExporterException("TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                ExporterException("TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
+        }
+
+        /// <summary>
+        /// Helper method to log transmission attempt with batch details.
+        /// </summary>
+        [NonEvent]
+        public void LogTransmissionFromStorageAttempt(ReadOnlyMemory<byte> content)
+        {
+            if (!IsEnabled(EventLevel.Informational, EventKeywords.None))
+                return;
+
+            try
+            {
+                var body = Encoding.UTF8.GetString(content.ToArray());
+
+                TransmissionFromStorageAttempt(body);
+            }
+            catch (Exception ex)
+            {
+                ExporterException("TransmissionFromStorageAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+            }
+        }
+        /// <summary>
+        /// Helper method to format the backoff duration in a human-readable way
+        /// </summary>
+        [NonEvent]
+        public void LogBackoffEnabled(Azure.Response? response, TimeSpan backOffTimeInterval,
+            bool persistentStorageEnabled, string endpoint)
+        {
+            if (!IsEnabled(EventLevel.Warning, EventKeywords.None))
+                return;
+
+            try
+            {
+                var statusCode = response?.Status ?? 0;
+                var reasonPhrase = response?.ReasonPhrase ?? "Unknown";
+                var backoffMs = backOffTimeInterval.TotalMilliseconds;
+                var backoffDescription = FormatBackoffDuration(backOffTimeInterval);
+
+                TransmissionBackoffEnabled(statusCode, reasonPhrase, backoffDescription, backoffMs,
+                    persistentStorageEnabled, endpoint, "c:\temp", "");
+            }
+            catch (Exception ex)
+            {
+                ExporterException("BackoffEnabled", ex.GetType().Name, ex.Message,
+                    ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+            }
+        }
+
+        [NonEvent]
+        private string FormatBackoffDuration(TimeSpan duration)
+        {
+            if (duration.TotalDays >= 1)
+                return $"{duration.TotalDays:F1} days";
+            else if (duration.TotalHours >= 1)
+                return $"{duration.TotalHours:F1} hours";
+            else if (duration.TotalMinutes >= 1)
+                return $"{duration.TotalMinutes:F1} minutes";
+            else
+                return $"{duration.TotalSeconds:F1} seconds";
         }
 
         /// <summary>
@@ -376,7 +486,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
             try
             {
-                BackendResponseReceived(statusCode, durationMs, endpoint, responseBody);
+                BackendResponseReceived(statusCode, durationMs, endpoint, responseBody, "todo", "todo", 0);
 
                 // Parse response details
                 if (statusCode >= 200 && statusCode < 300)
@@ -408,7 +518,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                ExporterException("BackendResponse", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                ExporterException("BackendResponse", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -430,7 +540,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
             catch (Exception ex)
             {
-                ExporterException("TransmissionRetry", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                ExporterException("TransmissionRetry", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -464,6 +574,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                     composition.TraceCount++;
                 else if (typeName.Contains("metric"))
                     composition.MetricCount++;
+                //todo: Add more specific type checks if needed
             }
 
             composition.Summary = $"Requests: {composition.RequestCount}, Dependencies: {composition.DependencyCount}, Traces: {composition.TraceCount}, Metrics: {composition.MetricCount}";

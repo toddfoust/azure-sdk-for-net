@@ -101,6 +101,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter
 #if DEBUG
             TelemetryDebugWriter.WriteTelemetryFromStorage(body);
 #endif
+            //ADF Note: Picked a random place here to log that we are loading telemetry items from disk out for delivery
+            AzureMonitorDiagnosticsEventSourceExporter.Log.LogTransmissionFromStorageAttempt(body);
 
             return CreateRequest(RequestContent.Create(body));
         }

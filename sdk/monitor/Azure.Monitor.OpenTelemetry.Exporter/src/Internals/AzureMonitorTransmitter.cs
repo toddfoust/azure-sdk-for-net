@@ -37,6 +37,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
         internal readonly TransmitFromStorageHandler? _transmitFromStorageHandler;
         private readonly bool _isAadEnabled;
         private bool _disposed;
+        private readonly DiagnosticsDnsCache? _dnsCache;
 
         public AzureMonitorTransmitter(AzureMonitorExporterOptions options, IPlatform platform)
         {
@@ -61,6 +62,14 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
             }
 
             _statsbeat = InitializeStatsbeat(options, _connectionVars, platform);
+
+            // Initialize DNS cache and prewarm with ingestion endpoint
+            _dnsCache = new DiagnosticsDnsCache();
+            _dnsCache.PrewarmCache(_connectionVars.IngestionEndpoint);
+
+            // Also prewarm Live Metrics and other endpoints if needed
+            _dnsCache.PrewarmCache("https://rt.services.visualstudio.com");
+            _dnsCache.PrewarmCache("https://snapshot.monitor.azure.com");
         }
 
         internal static ConnectionVars InitializeConnectionVars(AzureMonitorExporterOptions options, IPlatform platform)
@@ -121,7 +130,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                         instrumentationKey: connectionVars.InstrumentationKey);
 
                     AzureMonitorExporterEventSource.Log.InitializedPersistentStorage(connectionVars.InstrumentationKey, storageDirectory);
-                    AzureMonitorDiagnosticsEventSourceCore.Log.PersistentStorageEnabled(connectionVars.InstrumentationKey, storageDirectory, Environment.CurrentManagedThreadId);
+                    AzureMonitorDiagnosticsEventSourceCore.Log.OfflineStorageEnabled(connectionVars.InstrumentationKey, storageDirectory, Environment.CurrentManagedThreadId);
 
                     return new FileBlobProvider(storageDirectory);
                 }
@@ -174,23 +183,24 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
 
             var telemetryList = telemetryItems.ToList();
 
-            // Create a new batch summary for this transmission
+            // Create a new batch summary for this transmission, we'll use it to track types and counts of records
             var batchSummary = new TelemetryBatchSummary();
 
-            // ADF PILLAR 1: Log telemetry production (what telemetry was created for ingestion)
-            LogTelemetryItemsProduced(telemetryList, origin, batchSummary);
+            // ADF PILLAR 1: Log telemetry production (what telemetry was created, survived sampling, went through filters/alterations and ready for ingestion)
+            LogTelemetryItemsReadyForTransmission(telemetryList, origin, batchSummary);
 
             try
             {
                 if (_transmissionStateManager.State == TransmissionState.Closed)
                 {
-                    // ADF PILLAR 2: Log transmission attempt with batch details
                     if (async)
                     {
+                        // ADF PILLAR 2: Log transmission attempt with batch details
                         await LogTransmissionAttempt(batchSummary, origin).ConfigureAwait(false);
                     }
                     else
                     {
+                        // ADF PILLAR 2: Log transmission attempt with batch details
                         LogTransmissionAttemptSynchronous(batchSummary, origin);
                     }
 
@@ -200,36 +210,68 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
 
                     result = HttpPipelineHelper.IsSuccess(httpMessage);
 
-                    // ADF PILLAR 3: Log backend response
+                    // ADF PILLAR 3: First log the raw backend response, both successes and failures here, just show it to the customer
                     LogBackendResponse(httpMessage, batchSummary, origin);
 
-                    if (result == ExportResult.Failure && _fileBlobProvider != null)
-                    {
-                        _transmissionStateManager.EnableBackOff(httpMessage.HasResponse ? httpMessage.Response : null);
-                        result = HttpPipelineHelper.HandleFailures(httpMessage, _fileBlobProvider, _connectionVars, origin, _isAadEnabled);
-                    }
-                    else
+                    // I think this original logic is slightly off. What if result is failure but blob provider IS null?
+                    //if (result == ExportResult.Failure && _fileBlobProvider != null)
+                    //{
+                    //    _transmissionStateManager.EnableBackOff(httpMessage.HasResponse ? httpMessage.Response : null);
+                    //    result = HttpPipelineHelper.HandleFailures(httpMessage, _fileBlobProvider, _connectionVars, origin, _isAadEnabled);
+                    //}
+                    //else
+                    //{
+                    //    _transmissionStateManager.ResetConsecutiveErrors();
+                    //    _transmissionStateManager.CloseTransmission();
+                    //    AzureMonitorExporterEventSource.Log.TransmissionSuccess(origin, _isAadEnabled, _connectionVars.InstrumentationKey);
+                    //}
+
+                    if (result == ExportResult.Success)
                     {
                         _transmissionStateManager.ResetConsecutiveErrors();
                         _transmissionStateManager.CloseTransmission();
-                        AzureMonitorExporterEventSource.Log.TransmissionSuccess(origin, _isAadEnabled, _connectionVars.InstrumentationKey);
+                        // ADF Note: Log nothing, we already logged the response payload, so customers will see the 200 response
+                        // In the case of toggling between OpenTransmission to CloseTransmission, the backendresponse event will let customers know API is accessible again
+                        // So don't think we need to log each time the CloseTransmission is toggled, just when we start writing to disk may be enough.
+                    }
+                    else if (result == ExportResult.Failure && _fileBlobProvider != null)
+                    {
+                        _transmissionStateManager.EnableBackOff(httpMessage.HasResponse ? httpMessage.Response : null); // ADF: < In statemgr we log backoff retry starting
+                        result = HttpPipelineHelper.HandleFailures(httpMessage, _fileBlobProvider, _connectionVars, origin, _isAadEnabled);
+                    }
+                    else if (result == ExportResult.Failure)
+                    {
+                        // Handle failure case when no file provider is available
+                        // Maybe log a different event or take other action
+                        AzureMonitorExporterEventSource.Log.TransmitterFailed(origin, _isAadEnabled, _connectionVars.InstrumentationKey, new Exception("Transmission failed and writing to disk failed resulting in dropped telemetry."));
                     }
                 }
                 else
                 {
-                    // Agent is in backoff state - log that we're persisting to storage instead
-                    LogStoragePersistence(batchSummary, origin);
-
                     byte[] requestContent = HttpPipelineHelper.GetSerializedContent(telemetryItems);
                     if (_fileBlobProvider != null)
                     {
                         result = _fileBlobProvider.SaveTelemetry(requestContent);
+                        if (result == ExportResult.Success)
+                        {
+                            // Agent is in backoff state - log that we've successfully persisted the telemetryitems to disk instead
+                            LogStoragePersistence(batchSummary, origin);
+                        }
+                    }
+                    else
+                    {
+                        // This else means we are in backoff mode, writing data to disk but customer does
+                        // not have persistent storage enabled, so we just drop those records, lets inform
+                        // customer about that here.
+                        //AzureMonitorExporterEventSource.Log.FailedToSaveTelemetryToStorage(
+                        //    "No offline storage provider configured", _connectionVars.InstrumentationKey);
+                        result = ExportResult.Failure;
                     }
                 }
             }
             catch (Exception ex)
             {
-                // Log transmission failure with batch details
+                // Log transmission failure with batch details. This catch happens if we fail to write items to disk too
                 LogTransmissionFailure(ex, batchSummary, origin);
                 AzureMonitorExporterEventSource.Log.TransmitterFailed(origin, _isAadEnabled, _connectionVars.InstrumentationKey, ex);
             }
@@ -242,7 +284,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
         /// <summary>
         /// Logs all telemetry items using ADF Pillar 1 (What telemetry did your app produce and attempt to send?)
         /// </summary>
-        private void LogTelemetryItemsProduced(List<TelemetryItem> telemetryItems, TelemetryItemOrigin origin, TelemetryBatchSummary batchSummary)
+        private void LogTelemetryItemsReadyForTransmission(List<TelemetryItem> telemetryItems, TelemetryItemOrigin origin, TelemetryBatchSummary batchSummary)
         {
             // Only log if diagnostics are enabled to avoid performance impact
             if (!AzureMonitorDiagnosticsEventSourceData.Log.IsEnabled())
@@ -551,6 +593,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
         {
             try
             {
+                // Metrics are not serializing as I'd expect, may require more investigation
+                // I will share what this data type should look like in the specification doc and
+                // review serialization implementation later.
                 if (item.Data?.BaseData is Azure.Monitor.OpenTelemetry.Exporter.Models.MetricsData metricData)
                 {
                     var metricName = metricData.Metrics?.FirstOrDefault()?.Name ?? "Unknown";
@@ -619,25 +664,18 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                 var endpoint = GetEndpointUrl();
                 var resolvedIP = await ResolveEndpointIP(endpoint).ConfigureAwait(false);
                 var batchDescription = batchSummary.GetSummaryString();
-                var estimatedPayloadSize = EstimatePayloadSize(batchSummary);
+                //var estimatedPayloadSize = EstimatePayloadSize(batchSummary);
+                var counts = batchSummary.GetCountsDictionary();
 
                 // Log the transmission attempt with detailed batch composition
-                AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionAttemptStarted(
-                    endpoint, resolvedIP, batchSummary.TotalCount, estimatedPayloadSize);
-
-                // Log detailed batch composition if verbose logging is enabled
-                if (AzureMonitorDiagnosticsEventSourceExporter.Log.IsEnabled(EventLevel.Verbose, EventKeywords.None))
-                {
-                    var counts = batchSummary.GetCountsDictionary();
-                    AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionBatchDetails(
-                        endpoint, batchDescription,
-                        counts["Request"], counts["Dependency"], counts["Trace"], counts["Metric"]);
-                }
+                AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionAttempt(
+                    endpoint, resolvedIP, batchSummary.TotalCount, batchDescription,
+                    counts["Request"], counts["Dependency"], counts["Trace"], counts["Metric"], Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
                 AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
-                    "TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                    "TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -650,27 +688,30 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
             try
             {
                 var endpoint = GetEndpointUrl();
-                var resolvedIP = "Unknown"; // Skip DNS resolution in sync mode
+                var resolvedIP = _dnsCache?.GetResolvedIP(endpoint) ?? "Unknown"; // Use DNS cache object in sync mode
                 var batchDescription = batchSummary.GetSummaryString();
-                var estimatedPayloadSize = EstimatePayloadSize(batchSummary);
+                //var estimatedPayloadSize = EstimatePayloadSize(batchSummary);
+
+                var counts = batchSummary.GetCountsDictionary();
 
                 // Log the transmission attempt with detailed batch composition
-                AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionAttemptStarted(
-                    endpoint, resolvedIP, batchSummary.TotalCount, estimatedPayloadSize);
+                AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionAttempt(
+                    endpoint, resolvedIP, batchSummary.TotalCount, batchDescription,
+                    counts["Request"], counts["Dependency"], counts["Trace"], counts["Metric"], Environment.CurrentManagedThreadId);
 
-                // Log detailed batch composition if verbose logging is enabled
-                if (AzureMonitorDiagnosticsEventSourceExporter.Log.IsEnabled(EventLevel.Verbose, EventKeywords.None))
-                {
-                    var counts = batchSummary.GetCountsDictionary();
-                    AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionBatchDetails(
-                        endpoint, batchDescription,
-                        counts["Request"], counts["Dependency"], counts["Trace"], counts["Metric"]);
-                }
+                //// Log detailed batch composition if verbose logging is enabled (todo: adding as informational for now)
+                //if (AzureMonitorDiagnosticsEventSourceExporter.Log.IsEnabled(EventLevel.Informational, EventKeywords.None))
+                //{
+                //    var counts = batchSummary.GetCountsDictionary();
+                //    AzureMonitorDiagnosticsEventSourceExporter.Log.TransmissionBatchDetails(
+                //        endpoint, batchDescription,
+                //        counts["Request"], counts["Dependency"], counts["Trace"], counts["Metric"], Environment.CurrentManagedThreadId);
+                //}
             }
             catch (Exception ex)
             {
                 AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
-                    "TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                    "TransmissionAttempt", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -688,49 +729,68 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                 // Extract response details from httpMessage
                 // You'll need to adapt this based on your actual HttpMessage type
                 var statusCode = ExtractStatusCode(httpMessage);
-                var responseBody = ExtractResponseBody(httpMessage);
+                var responseBodyObject = ExtractResponseBody(httpMessage);
                 var duration = ExtractDuration(httpMessage); // in milliseconds
                 var endpoint = GetEndpointUrl();
+                var requestId = ExtractRequestId(httpMessage); // Optional, if available
+                var batchDescription = batchSummary.GetSummaryString();
+
+                // Serialize the response body object to JSON string for EventSource
+                string serializedResponseBody;
+                try
+                {
+                    serializedResponseBody = responseBodyObject != null ?
+                        JsonSerializer.Serialize(responseBodyObject, new JsonSerializerOptions { WriteIndented = false }) :
+                        "null";
+                }
+                catch (Exception serializationEx)
+                {
+                    // Fallback if serialization fails
+                    serializedResponseBody = responseBodyObject?.ToString() ?? "null";
+                    AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+                        "ResponseBodySerialization", serializationEx.GetType().Name, serializationEx.Message,
+                        serializationEx.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+                }
 
                 AzureMonitorDiagnosticsEventSourceExporter.Log.BackendResponseReceived(
-                    statusCode, duration, endpoint, responseBody);
+                    statusCode, duration, endpoint, batchDescription, requestId, serializedResponseBody ?? "Failure extracting response body", Environment.CurrentManagedThreadId);
 
-                // Parse response details for more specific logging
-                if (statusCode >= 200 && statusCode < 300)
-                {
-                    if (TryParseSuccessResponse(responseBody, out var received, out var accepted, out var rejected))
-                    {
-                        if (rejected > 0)
-                        {
-                            var rejectionReasons = ExtractRejectionReasons(responseBody);
-                            AzureMonitorDiagnosticsEventSourceExporter.Log.BackendPartialSuccess(
-                                accepted, rejected, endpoint, rejectionReasons);
-                        }
-                        else
-                        {
-                            AzureMonitorDiagnosticsEventSourceExporter.Log.BackendAcceptedTelemetry(
-                                received, accepted, rejected, endpoint);
-                        }
-                    }
-                }
-                else if (statusCode == 429 || statusCode == 439) // Throttling
-                {
-                    var retryAfter = ExtractRetryAfter(responseBody);
-                    var reason = ExtractThrottlingReason(responseBody);
-                    AzureMonitorDiagnosticsEventSourceExporter.Log.BackendThrottlingResponse(
-                        statusCode, retryAfter, endpoint, reason);
-                }
-                else if (statusCode >= 400)
-                {
-                    var errorMessage = ExtractErrorMessage(responseBody);
-                    AzureMonitorDiagnosticsEventSourceExporter.Log.BackendErrorResponse(
-                        statusCode, errorMessage, endpoint, responseBody);
-                }
+                //// Parse response details for more specific logging
+                //if (statusCode >= 200 && statusCode < 300)
+                //{
+                //    if (TryParseSuccessResponse(responseBody, out var received, out var accepted, out var rejected))
+                //    {
+                //        if (rejected > 0)
+                //        {
+                //            var rejectionReasons = ExtractRejectionReasons(responseBody);
+                //            AzureMonitorDiagnosticsEventSourceExporter.Log.BackendPartialSuccess(
+                //                accepted, rejected, endpoint, rejectionReasons);
+                //        }
+                //        else
+                //        {
+                //            AzureMonitorDiagnosticsEventSourceExporter.Log.BackendAcceptedTelemetry(
+                //                received, accepted, rejected, endpoint);
+                //        }
+                //    }
+                //}
+                //else if (statusCode == 429 || statusCode == 439) // Throttling
+                //{
+                //    var retryAfter = ExtractRetryAfter(responseBody);
+                //    var reason = ExtractThrottlingReason(responseBody);
+                //    AzureMonitorDiagnosticsEventSourceExporter.Log.BackendThrottlingResponse(
+                //        statusCode, retryAfter, endpoint, reason);
+                //}
+                //else if (statusCode >= 400)
+                //{
+                //    var errorMessage = ExtractErrorMessage(responseBody);
+                //    AzureMonitorDiagnosticsEventSourceExporter.Log.BackendErrorResponse(
+                //        statusCode, errorMessage, endpoint, responseBody);
+                //}
             }
             catch (Exception ex)
             {
                 AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
-                    "BackendResponse", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                    "BackendResponse", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -754,7 +814,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
             catch (Exception ex)
             {
                 AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
-                    "StoragePersistence", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty);
+                    "StoragePersistence", ex.GetType().Name, ex.Message, ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
             }
         }
 
@@ -797,24 +857,320 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
             return estimatedSize;
         }
 
-        // These methods need to be implemented based on your actual HttpMessage type
+        // Implementation for parsing Azure.Core.HttpMessage responses
         private int ExtractStatusCode(object httpMessage)
         {
-            // Implementation depends on your HttpMessage type
-            // Example: return ((HttpResponseMessage)httpMessage).StatusCode;
-            return 200; // Placeholder
+            try
+            {
+                if (httpMessage is Azure.Core.HttpMessage azureHttpMessage &&
+                    azureHttpMessage.HasResponse &&
+                    azureHttpMessage.Response != null)
+                {
+                    return azureHttpMessage.Response.Status;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log parsing error but don't throw - diagnostic info shouldn't break the pipeline
+                AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+                    "ExtractStatusCode", ex.GetType().Name, ex.Message,
+                    ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+            }
+
+            return 0; // Unknown/no response
         }
 
-        private string ExtractResponseBody(object httpMessage)
+        //private string ExtractResponseBody(object httpMessage)
+        //{
+        //    try
+        //    {
+        //        if (httpMessage is Azure.Core.HttpMessage azureHttpMessage &&
+        //            azureHttpMessage.HasResponse &&
+        //            azureHttpMessage.Response?.Content != null)
+        //        {
+        //            // BinaryData.ToString() returns the content as UTF-8 string
+        //            var content = azureHttpMessage.Response.Content.ToString();
+
+        //            // Limit response body size for diagnostic logs to prevent excessive log volume
+        //            const int maxBodyLength = 1024; // 1KB limit
+        //            if (content.Length > maxBodyLength)
+        //            {
+        //                return content.Substring(0, maxBodyLength) + "... [truncated]";
+        //            }
+
+        //            return content;
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // Log parsing error but don't throw
+        //        AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+        //            "ExtractResponseBody", ex.GetType().Name, ex.Message,
+        //            ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+
+        //        return "Error reading response body";
+        //    }
+
+        //    return string.Empty; // No response or no content
+        //}
+
+        private object? ExtractResponseBody(object httpMessage)
         {
-            // Implementation depends on your HttpMessage type
-            return string.Empty; // Placeholder
+            try
+            {
+                if (httpMessage is Azure.Core.HttpMessage azureHttpMessage &&
+                    azureHttpMessage.HasResponse &&
+                    azureHttpMessage.Response?.Content != null)
+                {
+                    // Get the raw content as string
+                    var rawContent = azureHttpMessage.Response.Content.ToString();
+
+                    if (string.IsNullOrEmpty(rawContent))
+                    {
+                        return new { message = "Empty response body" };
+                    }
+
+                    // Try to parse as JSON first
+                    if (TryParseAsJsonObject(rawContent, out var jsonObject))
+                    {
+                        return jsonObject;
+                    }
+                    else
+                    {
+                        // Not JSON - treat as plain text, but still limit size
+                        const int maxBodyLength = 1024;
+                        if (rawContent.Length > maxBodyLength)
+                        {
+                            return new
+                            {
+                                message = "Non-JSON response (truncated)",
+                                content = rawContent.Substring(0, maxBodyLength),
+                                truncated = true,
+                                originalLength = rawContent.Length
+                            };
+                        }
+                        else
+                        {
+                            return new
+                            {
+                                message = "Non-JSON response",
+                                content = rawContent
+                            };
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log parsing error but don't throw
+                AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+                    "ExtractResponseBody", ex.GetType().Name, ex.Message,
+                    ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+
+                return new { error = "Error reading response body", exception = ex.Message };
+            }
+
+            return new { message = "No response or no content" };
+        }
+
+        private bool TryParseAsJsonObject(string content, out object? jsonObject)
+        {
+            jsonObject = null;
+
+            try
+            {
+                // For large JSON responses that might get truncated, we need to be smart about it
+                const int maxContentLength = 8192; // 8KB - much larger than before to accommodate 500 items
+
+                string contentToParse = content;
+                bool wasTruncated = false;
+
+                if (content.Length > maxContentLength)
+                {
+                    // Find a good truncation point that preserves JSON structure
+                    contentToParse = TruncateJsonSafely(content, maxContentLength);
+                    wasTruncated = true;
+                }
+
+                // Try to parse the JSON
+                using var document = JsonDocument.Parse(contentToParse);
+                var rootElement = document.RootElement;
+
+                // Convert to a regular object that can be serialized properly
+                var result = ConvertJsonElementToObject(rootElement);
+
+                // If we truncated, add metadata about truncation
+                if (wasTruncated)
+                {
+                    if (result is Dictionary<string, object> dict)
+                    {
+                        dict["_truncated"] = true;
+                        dict["_originalLength"] = content.Length;
+                        dict["_truncatedLength"] = contentToParse.Length;
+                    }
+                }
+
+                jsonObject = result;
+                return true;
+            }
+            catch (JsonException)
+            {
+                // Not valid JSON
+                return false;
+            }
+            catch (Exception)
+            {
+                // Other parsing errors
+                return false;
+            }
+        }
+
+        private string TruncateJsonSafely(string json, int maxLength)
+        {
+            if (json.Length <= maxLength)
+                return json;
+
+            // Try to truncate at a reasonable JSON boundary
+            string truncated = json.Substring(0, maxLength);
+
+            // Look for the last complete JSON object/array element
+            int lastComma = truncated.LastIndexOf(',');
+            int lastCloseBrace = truncated.LastIndexOf('}');
+            int lastCloseBracket = truncated.LastIndexOf(']');
+
+            // Find the best truncation point
+            int truncateAt = Math.Max(Math.Max(lastComma, lastCloseBrace), lastCloseBracket);
+
+            if (truncateAt > maxLength / 2) // Only use it if it's not too short
+            {
+                truncated = json.Substring(0, truncateAt + 1);
+            }
+
+            // Try to close any unclosed structures
+            int openBraces = 0;
+            int openBrackets = 0;
+
+            foreach (char c in truncated)
+            {
+                switch (c)
+                {
+                    case '{':
+                        openBraces++;
+                        break;
+                    case '}':
+                        openBraces--;
+                        break;
+                    case '[':
+                        openBrackets++;
+                        break;
+                    case ']':
+                        openBrackets--;
+                        break;
+                }
+            }
+
+            // Close unclosed structures
+            for (int i = 0; i < openBrackets; i++)
+                truncated += "]";
+            for (int i = 0; i < openBraces; i++)
+                truncated += "}";
+
+            return truncated;
+        }
+
+        private object? ConvertJsonElementToObject(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var dict = new Dictionary<string, object?>();
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        dict[property.Name] = ConvertJsonElementToObject(property.Value);
+                    }
+                    return dict;
+
+                case JsonValueKind.Array:
+                    var list = new List<object?>();
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        list.Add(ConvertJsonElementToObject(item));
+                    }
+                    return list;
+
+                case JsonValueKind.String:
+                    return element.GetString() ?? string.Empty;
+
+                case JsonValueKind.Number:
+                    if (element.TryGetInt32(out int intValue))
+                        return intValue;
+                    if (element.TryGetInt64(out long longValue))
+                        return longValue;
+                    if (element.TryGetDouble(out double doubleValue))
+                        return doubleValue;
+                    return element.GetRawText();
+
+                case JsonValueKind.True:
+                    return true;
+
+                case JsonValueKind.False:
+                    return false;
+
+                case JsonValueKind.Null:
+                    return null;
+
+                default:
+                    return element.GetRawText();
+            }
         }
 
         private int ExtractDuration(object httpMessage)
         {
-            // Implementation depends on your HttpMessage type
-            return 0; // Placeholder - return duration in milliseconds
+            try
+            {
+                if (httpMessage is Azure.Core.HttpMessage azureHttpMessage)
+                {
+                    var processingStartTime = azureHttpMessage.ProcessingContext.StartTime;
+                    var endTime = DateTimeOffset.UtcNow;
+
+                    // Calculate duration from start of processing to now
+                    var duration = endTime - processingStartTime;
+
+                    // Return duration in milliseconds, ensuring non-negative
+                    return Math.Max(0, (int)duration.TotalMilliseconds);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log parsing error but don't throw
+                AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+                    "ExtractDuration", ex.GetType().Name, ex.Message,
+                    ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+            }
+
+            return 0; // Unknown duration
+        }
+
+        private string ExtractRequestId(object httpMessage)
+        {
+            try
+            {
+                if (httpMessage is Azure.Core.HttpMessage azureHttpMessage)
+                {
+                    var requestid = azureHttpMessage.Request.ClientRequestId ?? "unknown";
+
+                    return requestid;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log parsing error but don't throw
+                AzureMonitorDiagnosticsEventSourceExporter.Log.ExporterException(
+                    "ExtractRequestId", ex.GetType().Name, ex.Message,
+                    ex.StackTrace ?? string.Empty, Environment.CurrentManagedThreadId);
+            }
+
+            return "unknown"; // Unknown requestId
         }
 
         // Response parsing methods (implement based on your backend response format)
@@ -972,6 +1328,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                 {
                     AzureMonitorExporterEventSource.Log.DisposedObject(nameof(AzureMonitorTransmitter));
                     _statsbeat?.Dispose();
+                    _dnsCache?.Dispose();
                     var fileBlobProvider = _fileBlobProvider as FileBlobProvider;
                     if (fileBlobProvider != null)
                     {

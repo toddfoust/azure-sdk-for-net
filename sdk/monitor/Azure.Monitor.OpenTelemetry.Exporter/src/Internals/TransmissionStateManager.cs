@@ -120,6 +120,10 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                         _backOffIntervalTimer.Start();
 
                         AzureMonitorExporterEventSource.Log.BackoffEnabled(backOffTimeInterval.TotalMilliseconds);
+                        // ADF Note: It will help customers and support engineers if we can log the physical file these telemetry items are getting written to on disk
+                        // I cannot seem to get that path or file name extracted from the Transmitter._fileBlobProvider object so just hard coding it for our demo
+                        // Also, not sure if we shoudl do something with the value populated in is persistent storage enabled here, so just supplying 'true' for now and the demo
+                        AzureMonitorDiagnosticsEventSourceExporter.Log.LogBackoffEnabled(response, backOffTimeInterval, true, "C:\\Users\\toddfous\\AppData\\Local\\Microsoft\\AzureMonitor\\7a57fd7c952adedd5cebf35f09a1ac427f290419f03dff8e4a171635e54779f8\\2025-08-02T035452.8549862Z-f5ab0513efc14a2a8596c645a7ad7784.blob");
                     }
                 }
 

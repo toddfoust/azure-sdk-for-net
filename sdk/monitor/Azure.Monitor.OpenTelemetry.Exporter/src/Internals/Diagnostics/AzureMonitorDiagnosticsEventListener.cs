@@ -585,6 +585,93 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             };
         }
 
+        //private Dictionary<string, object> CreateAttributes(EventWrittenEventArgs eventData)
+        //{
+        //    var attributes = new Dictionary<string, object>();
+
+        //    // Define the telemetry event names we want to process
+        //    var telemetryEventNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        //    {
+        //        "Request",
+        //        "RemoteDependency",
+        //        "Message",
+        //        "Exception",
+        //        "Metric",
+        //        "Event",
+        //        "PageView"
+        //    };
+
+        //    // Add payload data as attributes
+        //    if (eventData.Payload != null && eventData.PayloadNames != null)
+        //    {
+        //        if (!string.IsNullOrEmpty(eventData.EventName) && telemetryEventNames.Contains(eventData.EventName))
+        //        {
+        //            string? telemetryDataId = null;
+
+        //            for (int i = 0; i < Math.Min(eventData.Payload.Count, eventData.PayloadNames.Count); i++)
+        //            {
+        //                var paramName = eventData.PayloadNames[i];
+        //                var paramValue = eventData.Payload[i];
+
+        //                // Extract specific telemetry attributes we care about
+        //                if (string.Equals(paramName, "telemetryOrigin", StringComparison.OrdinalIgnoreCase))
+        //                {
+        //                    // Origin of the telemetry, specific exporter, or loaded from disk?
+        //                    attributes["agent.diag.telemetry.origin"] = paramValue?.ToString() ?? "Unknown";
+        //                }
+        //                else if (string.Equals(paramName, "telemetryDataId", StringComparison.OrdinalIgnoreCase))
+        //                {
+        //                    telemetryDataId = paramValue?.ToString();
+
+        //                    if (!string.IsNullOrEmpty(telemetryDataId))
+        //                    {
+        //                        var telemetryItem = TelemetryDataCache.Retrieve(telemetryDataId ?? "0");
+        //                        if (telemetryItem != null)
+        //                        {
+        //                            // Serialize copy of telemetry record. May need to sanitize this value?
+        //                            // Store the actual object - JsonSerializer will handle it as nested JSON
+        //                            attributes["agent.diag.telemetry.data"] = telemetryItem;
+        //                        }
+        //                    }
+        //                    //attributes["agent.diag.telemetry.data"] = paramValue?.ToString() ?? "Unknown";
+        //                }
+        //                else if (string.Equals(paramName, "telemetryType", StringComparison.OrdinalIgnoreCase))
+        //                {
+        //                    // What is the telemetry type?
+        //                    attributes["agent.diag.telemetry.type"] = paramValue?.ToString() ?? "Unknown";
+        //                }
+        //            }
+        //        }
+        //        else
+        //        {
+        //            // For any events not dumping raw telemetry, just enumerate all the eventData key/value pairs as attributes
+        //            for (int i = 0; i < Math.Min(eventData.Payload.Count, eventData.PayloadNames.Count); i++)
+        //            {
+        //                var key = eventData.PayloadNames[i];
+        //                var value = eventData.Payload[i];
+
+        //                if (!string.IsNullOrEmpty(key) && value != null && key != "threadId")
+        //                {
+        //                    // Skip telemetry Count attributes that are zero to reduce log noise
+        //                    if (IsCountAttribute(key) && IsZeroValue(value))
+        //                    {
+        //                        continue; // Skip this attribute
+        //                    }
+
+        //                    attributes[$"agent.diag.{key}"] = value;
+        //                }
+        //            }
+        //        }
+        //    }
+
+        //    // Add event-specific metadata
+        //    //attributes["agent.diag.event.id"] = eventData.EventId;
+        //    //attributes["agent.diag.event.task"] = eventData.Task.ToString();
+        //    //attributes["agent.diag.event.opcode"] = eventData.Opcode.ToString();
+
+        //    return attributes;
+        //}
+
         private Dictionary<string, object> CreateAttributes(EventWrittenEventArgs eventData)
         {
             var attributes = new Dictionary<string, object>();
@@ -650,9 +737,29 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                         var key = eventData.PayloadNames[i];
                         var value = eventData.Payload[i];
 
-                        if (!string.IsNullOrEmpty(key) && value != null)
+                        if (!string.IsNullOrEmpty(key) && value != null && key != "threadId")
                         {
-                            attributes[$"agent.diag.{key}"] = value;
+                            // Special handling for responseBody - try to parse as JSON object
+                            if (key.Equals("responseBody", StringComparison.OrdinalIgnoreCase) && value is string jsonString)
+                            {
+                                var parsedObject = TryParseJsonString(jsonString);
+                                attributes[$"agent.diag.{key}"] = parsedObject;
+                            }
+                            // Special handling for telemetryDetails - also try to parse as JSON object
+                            else if (key.Equals("telemetryDetails", StringComparison.OrdinalIgnoreCase) && value is string telemetryJsonString)
+                            {
+                                var parsedObject = TryParseJsonString(telemetryJsonString);
+                                attributes[$"agent.diag.{key}"] = parsedObject;
+                            }
+                            // Skip telemetry Count attributes that are zero to reduce log noise
+                            else if (IsCountAttribute(key) && IsZeroValue(value))
+                            {
+                                continue; // Skip this attribute
+                            }
+                            else
+                            {
+                                attributes[$"agent.diag.{key}"] = value;
+                            }
                         }
                     }
                 }
@@ -664,6 +771,109 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             //attributes["agent.diag.event.opcode"] = eventData.Opcode.ToString();
 
             return attributes;
+        }
+
+        /// <summary>
+        /// Attempts to parse a JSON string into an object. Returns the original string if parsing fails.
+        /// </summary>
+        private object TryParseJsonString(string jsonString)
+        {
+            if (string.IsNullOrEmpty(jsonString))
+                return jsonString ?? string.Empty;
+
+            try
+            {
+                // Try to parse as JSON and convert to an object structure
+                using var document = JsonDocument.Parse(jsonString);
+                return ConvertJsonElementToObject(document.RootElement) ?? jsonString;
+            }
+            catch (JsonException)
+            {
+                // Not valid JSON, return as-is
+                return jsonString;
+            }
+            catch (Exception)
+            {
+                // Other parsing errors, return as-is
+                return jsonString;
+            }
+        }
+
+        /// <summary>
+        /// Converts JsonElement to a plain object structure that can be serialized properly
+        /// </summary>
+        private object? ConvertJsonElementToObject(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var dict = new Dictionary<string, object?>();
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        dict[property.Name] = ConvertJsonElementToObject(property.Value);
+                    }
+                    return dict;
+
+                case JsonValueKind.Array:
+                    var list = new List<object?>();
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        list.Add(ConvertJsonElementToObject(item));
+                    }
+                    return list;
+
+                case JsonValueKind.String:
+                    return element.GetString();
+
+                case JsonValueKind.Number:
+                    if (element.TryGetInt32(out int intValue))
+                        return intValue;
+                    if (element.TryGetInt64(out long longValue))
+                        return longValue;
+                    if (element.TryGetDouble(out double doubleValue))
+                        return doubleValue;
+                    return element.GetRawText();
+
+                case JsonValueKind.True:
+                    return true;
+
+                case JsonValueKind.False:
+                    return false;
+
+                case JsonValueKind.Null:
+                    return null;
+
+                default:
+                    return element.GetRawText();
+            }
+        }
+
+        // Helper method to check if this is a count attribute we want to filter
+        private bool IsCountAttribute(string key)
+        {
+            return key.EndsWith("requestCount", StringComparison.OrdinalIgnoreCase) ||
+                   key.EndsWith("dependencyCount", StringComparison.OrdinalIgnoreCase) ||
+                   key.EndsWith("traceCount", StringComparison.OrdinalIgnoreCase) ||
+                   key.EndsWith("metricCount", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Helper method to check if a value represents zero
+        private bool IsZeroValue(object value)
+        {
+            if (value == null)
+                return false;
+
+            // Handle different numeric types that could represent zero
+            return value switch
+            {
+                int intValue => intValue == 0,
+                long longValue => longValue == 0L,
+                double doubleValue => doubleValue == 0.0,
+                float floatValue => floatValue == 0.0f,
+                decimal decimalValue => decimalValue == 0m,
+                string stringValue => stringValue == "0" || stringValue == "0.0",
+                _ => false
+            };
         }
 
         // Lightweight resource for regular log entries (OTEL-compliant)
@@ -753,7 +963,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 {
                     WriteIndented = false,
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                    DefaultIgnoreCondition = JsonIgnoreCondition.Never
                 }) + Environment.NewLine;
 
                 var jsonBytes = Encoding.UTF8.GetBytes(jsonText);

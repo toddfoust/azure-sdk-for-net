@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Runtime.CompilerServices;
@@ -80,13 +81,14 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             string processPath, string workingDirectory, string agentDirectory, string instrumentationKey, string connectionString,
             string cloudProvider, string cloudPlatform, string cloudResourceId, string cloudRole, string cloudRoleInstance,
             double cpuUsagePercent, long memoryUsageMB, string samplingType, double samplingRate,
-            string distributedTracingInbound, string distributedTracingOutbound, string customProcessors, int threadId)
+            string distributedTracingInbound, string distributedTracingOutbound, string customProcessors, bool sdkMetricsEnabled, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
                 WriteEvent(4, osType, osVersion, machineName, processId, processName, processPath, workingDirectory, agentDirectory,
                     instrumentationKey, connectionString, cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
-                    cpuUsagePercent, memoryUsageMB, samplingType, samplingRate, distributedTracingInbound, distributedTracingOutbound, customProcessors, threadId);
+                    cpuUsagePercent, memoryUsageMB, samplingType, samplingRate, distributedTracingInbound, distributedTracingOutbound,
+                    customProcessors, sdkMetricsEnabled, threadId);
             }
         }
 
@@ -102,8 +104,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-        [Event(6, Message = "Persistent storage is enabled. Retriable telemetry for Instrumentation Key '{0}' will be stored at: {1}", Level = EventLevel.Informational)]
-        public void PersistentStorageEnabled(string instrumentationKey, string storageDirectory, int threadId)
+        [Event(6, Message = "Offline storage is enabled. Retriable telemetry for Instrumentation Key '{0}' will be stored at: {1}", Level = EventLevel.Informational)]
+        public void OfflineStorageEnabled(string instrumentationKey, string storageDirectory, int threadId)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.None))
             {
@@ -111,7 +113,7 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             }
         }
 
-       #endregion
+        #endregion
 
         #region Agent Lifecycle Events
 
@@ -295,8 +297,8 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
             // For manual instrumentation, we're always attached
             var attachStatus = "Attached";
             var attachMode = "Manual instrumentation";
-            var backoffReason = "N/A - Manual instrumentation always attaches";
-            var interopStatus = "N/A - Manual instrumentation";
+            var backoffReason = "Not applicable; manual attach does not backoff";
+            var interopStatus = "Not applicable for manual attach";
 
             // TODO: In auto-instrumentation scenarios, check for:
             // - Conflicting ApplicationInsights.dll
@@ -364,12 +366,13 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                 var distributedTracingInbound = "Enabled";
                 var distributedTracingOutbound = "Enabled";
                 var customProcessors = GetCustomProcessors();
+                var sdkMetricsEnabled = true; // We somehow detect the new enhanced statsbeats metrics, aka SDK metrics is enabled or not, then add to env report
 
                 EnvironmentDetailsReport(osType, osVersion, machineName, processId, processName, processPath,
                     workingDirectory, agentDirectory, instrumentationKey, maskedConnectionString,
                     cloudProvider, cloudPlatform, cloudResourceId, cloudRole, cloudRoleInstance,
                     cpuUsage, memoryUsage, samplingType, samplingRate,
-                    distributedTracingInbound, distributedTracingOutbound, customProcessors, Environment.CurrentManagedThreadId);
+                    distributedTracingInbound, distributedTracingOutbound, customProcessors, sdkMetricsEnabled, Environment.CurrentManagedThreadId);
             }
             catch (Exception ex)
             {
@@ -396,10 +399,10 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
         {
             var defaults = new ConnectionEndpoints
             {
-                IngestionEndpoint = "https://dc.services.visualstudio.com/v2/track",
-                LiveMetricsEndpoint = "https://rt.services.visualstudio.com/QuickPulseService.svc",
+                IngestionEndpoint = "https://dc.services.visualstudio.com/",
+                LiveMetricsEndpoint = "https://rt.services.visualstudio.com/",
                 ProfilerEndpoint = "https://agent.azureserviceprofiler.net/",
-                SnapshotDebuggerEndpoint = "https://agent.azuresnapshotdebugger.net/"
+                SnapshotDebuggerEndpoint = "https://agent.azuresnapshotdebugger.net/" // "https://snapshot.monitor.azure.com/"
             };
 
             if (string.IsNullOrEmpty(connectionString))
@@ -422,12 +425,12 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
                         {
                             case "ingestionendpoint":
                                 if (value.EndsWith("/"))
-                                    defaults.IngestionEndpoint = value + "v2/track";
+                                    defaults.IngestionEndpoint = value;
                                 else
-                                    defaults.IngestionEndpoint = value + "/v2/track";
+                                    defaults.IngestionEndpoint = value + "/";
                                 break;
                             case "liveendpoint":
-                                defaults.LiveMetricsEndpoint = value.EndsWith("/") ? value + "QuickPulseService.svc" : value + "/QuickPulseService.svc";
+                                defaults.LiveMetricsEndpoint = value.EndsWith("/") ? value : value + "/";
                                 break;
                             case "profilerendpoint":
                                 defaults.ProfilerEndpoint = value;
@@ -479,22 +482,20 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
 
         private string[] ResolveHostname(string url)
         {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
+            {
+                DnsResolutionFailed(url, "Invalid URL or missing hostname", Environment.CurrentManagedThreadId);
+                return new[] { "Invalid URL" };
+            }
+
             try
             {
-                var uri = new Uri(url);
                 var addresses = Dns.GetHostAddresses(uri.Host);
-                var ipStrings = new List<string>();
-
-                foreach (var addr in addresses)
-                {
-                    ipStrings.Add(addr.ToString());
-                }
-
-                return ipStrings.ToArray();
+                return addresses.Select(addr => addr.ToString()).ToArray();
             }
             catch (Exception ex)
             {
-                DnsResolutionFailed(url, ex.Message, Environment.CurrentManagedThreadId);
+                DnsResolutionFailed(uri.Host, ex.Message, Environment.CurrentManagedThreadId);
                 return new[] { "Resolution failed" };
             }
         }

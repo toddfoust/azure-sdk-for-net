@@ -13,9 +13,9 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics
     {
         private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
         private static readonly Timer _cleanupTimer;
-        private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(2); // Short TTL
-        private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30); // Frequent cleanup
-        private const int MaxCacheSize = 500; // Conservative size limit
+        private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(5); // Short TTL
+        private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(2); // Frequent cleanup
+        private const int MaxCacheSize = 1000; // Conservative size limit
 
         static TelemetryDataCache()
         {
